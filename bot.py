@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import aiohttp
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -26,7 +26,7 @@ async def cmd_start(message: Message):
         "и я оценю твой образ, дам советы и рекомендации с учётом трендов 2026 и российской погоды. Жду фото!"
     )
 
-@dp.message(content_types=["photo"])
+@dp.message(F.photo)
 async def handle_photo(message: Message):
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
