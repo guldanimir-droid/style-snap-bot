@@ -1,17 +1,18 @@
+
 import aiohttp
-import asyncio
 import base64
 import json
 
 class GeminiClientWrapper:
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        # Используем стабильную версию API v1 и модель gemini-1.5-flash
+        self.base_url = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
 
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
         # Кодируем изображение в base64
         img_base64 = base64.b64encode(image_bytes).decode('utf-8')
-        
+
         # Формируем тело запроса
         payload = {
             "contents": [
@@ -28,13 +29,13 @@ class GeminiClientWrapper:
                 }
             ]
         }
-        
+
         headers = {
             "Content-Type": "application/json"
         }
-        
+
         url = f"{self.base_url}?key={self.api_key}"
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
