@@ -1,3 +1,7 @@
+import os
+print("All environment variables:")
+for key, value in os.environ.items():
+    print(f"{key}: {value}")
 import asyncio
 import logging
 import aiohttp
