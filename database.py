@@ -1,18 +1,18 @@
 import os
 from datetime import date
 from supabase import create_client, Client
-from dotenv import load_dotenv
 
-# Явно загружаем .env файл
-load_dotenv()
+# Отладка: выводим все переменные окружения
+print("=== DEBUG: All environment variables ===")
+for key, value in os.environ.items():
+    # Не выводим значения ключей полностью, чтобы не засорять логи, но покажем имена
+    print(f"{key} = {'set' if value else 'empty'}")
 
-# Читаем переменные напрямую из окружения
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-print("Loading database module...")
-print(f"SUPABASE_URL from env: {SUPABASE_URL}")
-print(f"SUPABASE_KEY from env: {'set' if SUPABASE_KEY else 'NOT SET'}")
+print(f"SUPABASE_URL = {SUPABASE_URL}")
+print(f"SUPABASE_KEY = {'set' if SUPABASE_KEY else 'NOT SET'}")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
