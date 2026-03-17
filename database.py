@@ -2,9 +2,18 @@ import os
 from datetime import date
 from supabase import create_client, Client
 
-url: str = os.environ.get("SUPABASE_URL")
-key: str = os.environ.get("SUPABASE_KEY")
-supabase: Client = create_client(url, key)
+# Импортируем переменные из config (чтобы они точно загрузились через dotenv)
+from config import SUPABASE_URL, SUPABASE_KEY
+
+# Для отладки выведем в логи, что получили
+print("Loading database module...")
+print(f"SUPABASE_URL from config: {SUPABASE_URL}")
+print(f"SUPABASE_KEY from config: {'set' if SUPABASE_KEY else 'NOT SET'}")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def get_user(user_id: str):
     response = supabase.table("users").select("*").eq("user_id", user_id).execute()
