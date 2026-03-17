@@ -1,7 +1,3 @@
-import os
-print("All environment variables:")
-for key, value in os.environ.items():
-    print(f"{key}: {value}")
 import asyncio
 import logging
 import aiohttp
@@ -10,9 +6,10 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKey
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, LOG_LEVEL, SUPABASE_URL, SUPABASE_KEY
+from config import TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, LOG_LEVEL, SUPABASE_URL, SUPABASE_KEY, OPENWEATHER_API_KEY
 from gemini_client import GeminiClientWrapper
 from prompts import SYSTEM_PROMPT
+from weather import get_weather
 import database
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
@@ -122,13 +119,11 @@ async def handle_photo(message: Message):
         user = database.get_user(user_id)
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
-        city = user.get("city", "Москва")  # пока заглушка
+        city = user.get("city", "Москва")  # пока заглушка, позже будем спрашивать город
 
-        # Здесь можно добавить получение погоды через API (позже)
-        weather_info = ""
-        # if city:
-        #     weather = get_weather(city)
-        #     weather_info = f"Сегодня в {city}: {weather}."
+        # Получаем погоду для города
+        weather_info = await get_weather(city)
+        weather_text = f"Сейчас в {city}: {weather_info}" if weather_info else ""
 
         # Формируем персонализированный промпт
         personal_prompt = SYSTEM_PROMPT
@@ -136,8 +131,8 @@ async def handle_photo(message: Message):
             personal_prompt += f"\nПользователь: {gender}."
         if style:
             personal_prompt += f"\nПредпочитаемый стиль: {style}."
-        if weather_info:
-            personal_prompt += f"\n{weather_info}"
+        if weather_text:
+            personal_prompt += f"\n{weather_text}"
 
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         await message.reply(result)
