@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, LOG_LEVEL, SUPABASE_URL, SUPABASE_KEY, OPENWEATHER_API_KEY
 from gemini_client import GeminiClientWrapper
 from prompts import SYSTEM_PROMPT
-from weather import get_weather
+from weather_api import get_weather
 import database
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
