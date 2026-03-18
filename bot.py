@@ -225,6 +225,13 @@ async def handle_photo(message: Message):
             "Не удалось проанализировать фото. Пожалуйста, отправьте другое, более чёткое изображение в полный рост."
         )
 
+# ---- Отладочный обработчик для всех сообщений ----
+@dp.message()
+async def debug_all_messages(message: Message):
+    logger.info(f"DEBUG: Got message from {message.from_user.id}, content_type: {message.content_type}, text: {message.text}")
+    if message.photo:
+        logger.info("DEBUG: This message contains photo, but main handler missed it!")
+
 # ---- Запуск ----
 
 async def main():
