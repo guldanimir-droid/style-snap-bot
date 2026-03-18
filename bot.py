@@ -21,13 +21,6 @@ dp = Dispatcher(storage=storage)
 
 gemini = GeminiClientWrapper(api_key=GEMINI_API_KEY)
 
-# ---- Отладочный обработчик для всех сообщений (самый первый) ----
-@dp.message()
-async def debug_all_messages(message: Message):
-    logger.info(f"DEBUG: Got message from {message.from_user.id}, content_type: {message.content_type}, text: {message.text}")
-    if message.photo:
-        logger.info("DEBUG: This message contains photo")
-
 # ---- Клавиатуры ----
 
 def get_gender_keyboard():
@@ -168,6 +161,7 @@ async def handle_manual_city(message: Message):
 @dp.message(F.photo)
 async def handle_photo(message: Message):
     user_id = str(message.from_user.id)
+    logger.info(f"Photo handler called for user {user_id}")  # добавили лог
 
     # Твой user_id (исключение для разработчика)
     DEVELOPER_ID = "8374306844"
