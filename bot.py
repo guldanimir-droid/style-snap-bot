@@ -135,12 +135,10 @@ async def ask_manual_city(message: Message):
         reply_markup=ReplyKeyboardRemove()
     )
 
-# Обработчик для ручного ввода города
-@dp.message()
+# ---- Обработчик для ручного ввода города (только для текстовых сообщений) ----
+@dp.message(F.text)
 async def handle_manual_city(message: Message):
     user_id = str(message.from_user.id)
-    if not message.text:
-        return
     if message.text.startswith('/'):
         return
     user = database.get_user(user_id)
@@ -161,7 +159,7 @@ async def handle_manual_city(message: Message):
 @dp.message(F.photo)
 async def handle_photo(message: Message):
     user_id = str(message.from_user.id)
-    logger.info(f"Photo handler called for user {user_id}")  # добавили лог
+    logger.info(f"Photo handler called for user {user_id}")
 
     # Твой user_id (исключение для разработчика)
     DEVELOPER_ID = "8374306844"
