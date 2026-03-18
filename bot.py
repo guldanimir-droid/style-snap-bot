@@ -282,17 +282,18 @@ async def handle_photo(message: Message):
         style = user.get("style_preference", "")
         city = user.get("city", "Москва")
 
-        # Временно отключаем погоду для отладки (потом вернём)
-        weather_context = ""
-        # weather_info = await get_weather(city)
-        # if weather_info:
-        #     weather_context = (
-        #         f"Сейчас в городе {city} такая погода: {weather_info}. "
-        #         f"Обязательно учитывай эти погодные условия, когда будешь давать советы: "
-        #         f"если холодно – рекомендуй тёплую одежду, если жарко – лёгкую, если дождь – непромокаемую."
-        #     )
-        # else:
-        #     weather_context = ""
+        # Получаем погоду для города
+        weather_info = await get_weather(city)
+        if weather_info:
+            weather_context = (
+                f"Сейчас в городе {city} такая погода: {weather_info}. "
+                f"Обязательно учитывай эти погодные условия, когда будешь давать советы: "
+                f"если холодно – рекомендуй тёплую одежду (куртки, свитера, непромокаемую обувь), "
+                f"если жарко – лёгкую и дышащую, если дождь – непромокаемые вещи и т.д. "
+                f"Пусть твои рекомендации будут практичными и соответствовать текущей погоде."
+            )
+        else:
+            weather_context = ""
 
         personal_prompt = SYSTEM_PROMPT
         if gender:
