@@ -10,7 +10,8 @@ from config import TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, LOG_LEVEL, SUPABASE_URL, 
 from gemini_client import GeminiClientWrapper
 from prompts import SYSTEM_PROMPT
 from weather_api import get_weather
-from affiliate import generate_affiliate_links  # <-- добавили импорт
+from affiliate import generate_affiliate_links
+from image_generator import generate_image  # <-- импортируем функцию генерации
 import database
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
@@ -300,10 +301,26 @@ async def handle_photo(message: Message):
 
         result = await gemini.analyze_style(image_bytes, personal_prompt)
 
-        # Добавляем аффилиатные ссылки
+        # ---- Генерация изображения по ключевому слову ----
+        keywords = ["белые брюки", "джинсовая куртка", "кожаная куртка", "свитер", "футболка", "кроссовки", "ботинки", "шапка", "шарф"]
+        generated_image_url = None
+        for kw in keywords:
+            if kw in result.lower():
+                generated_image_url = await generate_image(kw)
+                if generated_image_url:
+                    break
+
         result_with_links = generate_affiliate_links(result)
 
-        await message.reply(result_with_links, reply_markup=get_main_keyboard())
+        # ---- Отправка ответа с возможной генерацией ----
+        if generated_image_url:
+            # Временно не отправляем картинку, только текст
+            await message.reply(
+                f"{result_with_links}\n\n✨ (сгенерировано изображение «{kw}», но отправка пока в разработке)",
+                reply_markup=get_main_keyboard()
+            )
+        else:
+            await message.reply(result_with_links, reply_markup=get_main_keyboard())
 
         database.increment_requests(user_id)
 
