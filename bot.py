@@ -11,7 +11,7 @@ from gemini_client import GeminiClientWrapper
 from prompts import SYSTEM_PROMPT
 from weather_api import get_weather
 from affiliate import generate_affiliate_links
-from image_generator import generate_image  # <-- импортируем функцию генерации
+from image_generator import generate_image
 import database
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
@@ -50,7 +50,6 @@ def get_city_keyboard():
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
 
 def get_main_keyboard():
-    """Главная постоянная клавиатура"""
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="🌆 Сменить город"), KeyboardButton(text="ℹ️ Помощь")]
@@ -93,7 +92,6 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("profile"))
 async def cmd_profile(message: Message):
-    """Показать профиль пользователя"""
     user_id = str(message.from_user.id)
     user = database.get_user(user_id)
     await message.answer(
@@ -222,7 +220,6 @@ async def ask_manual_city(message: Message):
         reply_markup=ReplyKeyboardRemove()
     )
 
-# ---- Обработчик для ручного ввода города (только для текстовых сообщений) ----
 @dp.message(F.text)
 async def handle_manual_city(message: Message):
     user_id = str(message.from_user.id)
@@ -303,20 +300,23 @@ async def handle_photo(message: Message):
 
         # ---- Генерация изображения по ключевому слову ----
         keywords = ["белые брюки", "джинсовая куртка", "кожаная куртка", "свитер", "футболка", "кроссовки", "ботинки", "шапка", "шарф"]
-        generated_image_url = None
+        generated_image_bytes = None
+        used_keyword = None
         for kw in keywords:
             if kw in result.lower():
-                generated_image_url = await generate_image(kw)
-                if generated_image_url:
+                generated_image_bytes = await generate_image(kw)
+                if generated_image_bytes:
+                    used_keyword = kw
                     break
 
         result_with_links = generate_affiliate_links(result)
 
-        # ---- Отправка ответа с возможной генерацией ----
-        if generated_image_url:
-            # Временно не отправляем картинку, только текст
-            await message.reply(
-                f"{result_with_links}\n\n✨ (сгенерировано изображение «{kw}», но отправка пока в разработке)",
+        # ---- Отправка ответа ----
+        if generated_image_bytes:
+            # Отправляем фото с подписью
+            await message.reply_photo(
+                photo=generated_image_bytes,
+                caption=result_with_links,
                 reply_markup=get_main_keyboard()
             )
         else:
