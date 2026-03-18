@@ -24,7 +24,7 @@ async def generate_image(prompt: str, style: str = None) -> Optional[str]:
         return None
 
     # Используем FLUX.1-schnell через Inference API [citation:2]
-    api_url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+    api_url = "https://router.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
