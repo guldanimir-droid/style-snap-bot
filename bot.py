@@ -216,6 +216,8 @@ async def handle_photo(message: Message):
             personal_prompt += f"\n\n{weather_context}"
 
         result = await gemini.analyze_style(image_bytes, personal_prompt)
+        logger.info(f"Gemini result: {result}")  # Добавлено логирование результата
+
         await message.reply(result)
 
         database.increment_requests(user_id)
