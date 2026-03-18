@@ -4,7 +4,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-async def get_weather(city: str = "Moscow") -> str:
+async def get_weather(city: str = "Москва") -> str:
     """
     Получает текущую погоду для города через OpenWeatherMap API
     """
