@@ -57,17 +57,27 @@ async def cmd_start(message: Message):
         user = database.get_user(user_id)
         logger.info(f"User data: {user}")
 
-        if user.get("gender") and user.get("style_preference"):
-            await message.answer(
-                "Привет! Я стилист на базе ИИ. Отправь мне своё фото в полный рост, "
-                "и я оценю твой образ, дам советы и рекомендации с учётом трендов 2026 и российской погоды. Жду фото!"
-            )
-        else:
+        # Если нет пола или стиля – начинаем опрос
+        if not user.get("gender") or not user.get("style_preference"):
             await message.answer(
                 "Привет! Я стилист на базе ИИ. Чтобы советы были точнее, ответь на пару вопросов.\n\n"
                 "Ты парень или девушка?",
                 reply_markup=get_gender_keyboard()
             )
+        else:
+            # Пол и стиль есть, проверяем город
+            if not user.get("city"):
+                await message.answer(
+                    "Укажи город, в котором ты чаще всего бываешь. "
+                    "Это нужно, чтобы я мог учитывать погоду в советах.\n\n"
+                    "Выбери из списка или нажми «Другой город...», чтобы ввести название вручную:",
+                    reply_markup=get_city_keyboard()
+                )
+            else:
+                await message.answer(
+                    "Привет! Я стилист на базе ИИ. Отправь мне своё фото в полный рост, "
+                    "и я оценю твой образ, дам советы и рекомендации с учётом трендов 2026 и российской погоды. Жду фото!"
+                )
     except Exception as e:
         logger.exception(f"Error in start handler: {e}")
         await message.answer("Произошла внутренняя ошибка. Попробуй позже.")
@@ -224,6 +234,10 @@ async def handle_photo(message: Message):
 async def main():
     logger.info("Bot starting...")
     await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
