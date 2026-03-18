@@ -235,6 +235,7 @@ async def debug_all_messages(message: Message):
 # ---- Запуск ----
 
 async def main():
+    logger.info("Main function started")
     logger.info("Bot starting...")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
