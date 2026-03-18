@@ -57,7 +57,6 @@ async def cmd_start(message: Message):
         user = database.get_user(user_id)
         logger.info(f"User data: {user}")
 
-        # Если нет пола или стиля – начинаем опрос
         if not user.get("gender") or not user.get("style_preference"):
             await message.answer(
                 "Привет! Я стилист на базе ИИ. Чтобы советы были точнее, ответь на пару вопросов.\n\n"
@@ -65,7 +64,6 @@ async def cmd_start(message: Message):
                 reply_markup=get_gender_keyboard()
             )
         else:
-            # Пол и стиль есть, проверяем город
             if not user.get("city"):
                 await message.answer(
                     "Укажи город, в котором ты чаще всего бываешь. "
@@ -141,7 +139,6 @@ async def ask_manual_city(message: Message):
 @dp.message()
 async def handle_manual_city(message: Message):
     user_id = str(message.from_user.id)
-    # Игнорируем сообщения без текста (например, фото, стикеры)
     if not message.text:
         return
     if message.text.startswith('/'):
@@ -168,7 +165,6 @@ async def handle_photo(message: Message):
     # Твой user_id (исключение для разработчика)
     DEVELOPER_ID = "8374306844"
 
-    # Проверка лимита (с исключением для разработчика)
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id, limit=3):
             await message.reply(
@@ -234,10 +230,6 @@ async def handle_photo(message: Message):
 async def main():
     logger.info("Bot starting...")
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
