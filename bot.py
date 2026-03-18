@@ -10,6 +10,7 @@ from config import TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, LOG_LEVEL, SUPABASE_URL, 
 from gemini_client import GeminiClientWrapper
 from prompts import SYSTEM_PROMPT
 from weather_api import get_weather
+from affiliate import generate_affiliate_links  # <-- добавили импорт
 import database
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
@@ -128,7 +129,7 @@ async def cmd_help(message: Message):
 async def main_analyze(message: Message):
     await message.answer(
         "Отправь мне фото в полный рост, и я оценю твой образ!",
-        reply_markup=ReplyKeyboardRemove()  # временно убираем клавиатуру, чтобы не мешала
+        reply_markup=ReplyKeyboardRemove()
     )
 
 @dp.message(F.text == "👤 Мой профиль")
@@ -142,7 +143,7 @@ async def main_profile(message: Message):
         f"• Город: {user.get('city', 'не указан')}\n"
         f"• Сегодня использовано запросов: {user.get('requests_today', 0)}/3",
         parse_mode="Markdown",
-        reply_markup=get_main_keyboard()  # возвращаем главное меню
+        reply_markup=get_main_keyboard()
     )
 
 @dp.message(F.text == "🌆 Сменить город")
@@ -226,7 +227,6 @@ async def handle_manual_city(message: Message):
     user_id = str(message.from_user.id)
     if message.text.startswith('/'):
         return
-    # Если нажата какая-то из главных кнопок – игнорируем (они уже обработаны выше)
     if message.text in ["📸 Анализировать", "👤 Мой профиль", "🌆 Сменить город", "ℹ️ Помощь"]:
         return
     user = database.get_user(user_id)
@@ -250,9 +250,7 @@ async def handle_photo(message: Message):
     user_id = str(message.from_user.id)
     logger.info(f"Photo handler called for user {user_id}")
 
-    # Твой user_id (исключение для разработчика)
     DEVELOPER_ID = "8374306844"
-
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id, limit=3):
             await message.reply(
@@ -282,15 +280,12 @@ async def handle_photo(message: Message):
         style = user.get("style_preference", "")
         city = user.get("city", "Москва")
 
-        # Получаем погоду для города
         weather_info = await get_weather(city)
         if weather_info:
             weather_context = (
                 f"Сейчас в городе {city} такая погода: {weather_info}. "
                 f"Обязательно учитывай эти погодные условия, когда будешь давать советы: "
-                f"если холодно – рекомендуй тёплую одежду (куртки, свитера, непромокаемую обувь), "
-                f"если жарко – лёгкую и дышащую, если дождь – непромокаемые вещи и т.д. "
-                f"Пусть твои рекомендации будут практичными и соответствовать текущей погоде."
+                f"если холодно – рекомендуй тёплую одежду, если жарко – лёгкую, если дождь – непромокаемую."
             )
         else:
             weather_context = ""
@@ -304,7 +299,11 @@ async def handle_photo(message: Message):
             personal_prompt += f"\n\n{weather_context}"
 
         result = await gemini.analyze_style(image_bytes, personal_prompt)
-        await message.reply(result, reply_markup=get_main_keyboard())
+
+        # Добавляем аффилиатные ссылки
+        result_with_links = generate_affiliate_links(result)
+
+        await message.reply(result_with_links, reply_markup=get_main_keyboard())
 
         database.increment_requests(user_id)
 
