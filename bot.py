@@ -47,6 +47,14 @@ def get_city_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
 
+def get_main_keyboard():
+    """Главная постоянная клавиатура"""
+    kb = [
+        [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
+        [KeyboardButton(text="🌆 Сменить город"), KeyboardButton(text="ℹ️ Помощь")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
 # ---- Обработчики команд ----
 
 @dp.message(Command("start"))
@@ -74,17 +82,87 @@ async def cmd_start(message: Message):
             else:
                 await message.answer(
                     "Привет! Я стилист на базе ИИ. Отправь мне своё фото в полный рост, "
-                    "и я оценю твой образ, дам советы и рекомендации с учётом трендов 2026 и российской погоды. Жду фото!"
+                    "и я оценю твой образ, дам советы и рекомендации с учётом трендов 2026 и российской погоды.",
+                    reply_markup=get_main_keyboard()
                 )
     except Exception as e:
         logger.exception(f"Error in start handler: {e}")
         await message.answer("Произошла внутренняя ошибка. Попробуй позже.")
 
+@dp.message(Command("profile"))
+async def cmd_profile(message: Message):
+    """Показать профиль пользователя"""
+    user_id = str(message.from_user.id)
+    user = database.get_user(user_id)
+    await message.answer(
+        f"👤 **Твой профиль**\n"
+        f"• Пол: {user.get('gender', 'не указан')}\n"
+        f"• Стиль: {user.get('style_preference', 'не указан')}\n"
+        f"• Город: {user.get('city', 'не указан')}\n"
+        f"• Сегодня использовано запросов: {user.get('requests_today', 0)}/3",
+        parse_mode="Markdown"
+    )
+
 @dp.message(Command("setcity"))
 async def cmd_setcity(message: Message):
     await message.answer(
-        "В каком городе ты сейчас находишься? (например, Москва)",
+        "В каком городе ты сейчас находишься?",
         reply_markup=get_city_keyboard()
+    )
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    await message.answer(
+        "Я — стилист на базе ИИ. Отправь мне фото, и я оценю твой образ, дам советы и рекомендации с учётом трендов 2026 и погоды в твоём городе.\n\n"
+        "**Команды:**\n"
+        "/start — начать заново\n"
+        "/profile — мой профиль\n"
+        "/setcity — сменить город\n"
+        "/help — эта справка",
+        parse_mode="Markdown"
+    )
+
+# ---- Обработчики кнопок главного меню ----
+
+@dp.message(F.text == "📸 Анализировать")
+async def main_analyze(message: Message):
+    await message.answer(
+        "Отправь мне фото в полный рост, и я оценю твой образ!",
+        reply_markup=ReplyKeyboardRemove()  # временно убираем клавиатуру, чтобы не мешала
+    )
+
+@dp.message(F.text == "👤 Мой профиль")
+async def main_profile(message: Message):
+    user_id = str(message.from_user.id)
+    user = database.get_user(user_id)
+    await message.answer(
+        f"👤 **Твой профиль**\n"
+        f"• Пол: {user.get('gender', 'не указан')}\n"
+        f"• Стиль: {user.get('style_preference', 'не указан')}\n"
+        f"• Город: {user.get('city', 'не указан')}\n"
+        f"• Сегодня использовано запросов: {user.get('requests_today', 0)}/3",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()  # возвращаем главное меню
+    )
+
+@dp.message(F.text == "🌆 Сменить город")
+async def main_change_city(message: Message):
+    await message.answer(
+        "Выбери новый город:",
+        reply_markup=get_city_keyboard()
+    )
+
+@dp.message(F.text == "ℹ️ Помощь")
+async def main_help(message: Message):
+    await message.answer(
+        "Я — стилист на базе ИИ. Отправь мне фото, и я оценю твой образ, дам советы и рекомендации с учётом трендов 2026 и погоды в твоём городе.\n\n"
+        "**Команды:**\n"
+        "/start — начать заново\n"
+        "/profile — мой профиль\n"
+        "/setcity — сменить город\n"
+        "/help — эта справка",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
     )
 
 # ---- Обработчики выбора пола, стиля и города ----
@@ -105,18 +183,25 @@ async def set_style(message: Message):
     style = message.text
     database.set_user_info(user_id, style=style)
     await message.answer(
-        "Теперь укажи город, в котором ты чаще всего бываешь. "
-        "Это нужно, чтобы я мог учитывать погоду в советах.\n\n"
+        "Теперь укажи город, в котором ты чаще всего бываешь.\n\n"
         "Выбери из списка или нажми «Другой город...», чтобы ввести название вручную:",
         reply_markup=get_city_keyboard()
     )
 
 @dp.message(F.text == "Пропустить")
 async def skip_info(message: Message):
-    await message.answer(
-        "Хорошо, если захочешь заполнить позже — просто напиши /start. А пока отправь фото!",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    user_id = str(message.from_user.id)
+    user = database.get_user(user_id)
+    if not user.get("city"):
+        await message.answer(
+            "Укажи хотя бы город, чтобы я мог учитывать погоду.",
+            reply_markup=get_city_keyboard()
+        )
+    else:
+        await message.answer(
+            "Хорошо, если захочешь заполнить позже — просто напиши /start. А пока отправь фото!",
+            reply_markup=get_main_keyboard()
+        )
 
 @dp.message(F.text.in_(["Москва", "Санкт-Петербург", "Казань", "Екатеринбург", "Новосибирск", "Владивосток", "Калининград"]))
 async def set_city_from_button(message: Message):
@@ -124,8 +209,8 @@ async def set_city_from_button(message: Message):
     city = message.text
     database.set_user_info(user_id, city=city)
     await message.answer(
-        f"Отлично, запомнил: {city}. Теперь отправь мне своё фото, и я проанализирую образ с учётом погоды в твоём городе!",
-        reply_markup=ReplyKeyboardRemove()
+        f"Отлично, запомнил: {city}. Теперь отправь мне фото, и я проанализирую образ с учётом погоды в твоём городе!",
+        reply_markup=get_main_keyboard()
     )
 
 @dp.message(F.text == "Другой город...")
@@ -141,17 +226,21 @@ async def handle_manual_city(message: Message):
     user_id = str(message.from_user.id)
     if message.text.startswith('/'):
         return
+    # Если нажата какая-то из главных кнопок – игнорируем (они уже обработаны выше)
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🌆 Сменить город", "ℹ️ Помощь"]:
+        return
     user = database.get_user(user_id)
     if user.get("city") is None:
         city = message.text
         database.set_user_info(user_id, city=city)
         await message.answer(
             f"Запомнил: {city}. Теперь отправь фото, и я проанализирую образ с учётом погоды!",
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=get_main_keyboard()
         )
     else:
         await message.answer(
-            "Я тебя не совсем понял. Если хочешь изменить город, воспользуйся командой /setcity."
+            "Я тебя не совсем понял. Если хочешь изменить город, воспользуйся командой /setcity или кнопкой «Сменить город».",
+            reply_markup=get_main_keyboard()
         )
 
 # ---- Обработчик фото ----
@@ -193,16 +282,14 @@ async def handle_photo(message: Message):
         style = user.get("style_preference", "")
         city = user.get("city", "Москва")
 
-        # Временно отключаем погоду для отладки
+        # Временно отключаем погоду для отладки (потом вернём)
         weather_context = ""
         # weather_info = await get_weather(city)
         # if weather_info:
         #     weather_context = (
         #         f"Сейчас в городе {city} такая погода: {weather_info}. "
         #         f"Обязательно учитывай эти погодные условия, когда будешь давать советы: "
-        #         f"если холодно – рекомендуй тёплую одежду (куртки, свитера, непромокаемую обувь), "
-        #         f"если жарко – лёгкую и дышащую, если дождь – непромокаемые вещи и т.д. "
-        #         f"Пусть твои рекомендации будут практичными и соответствовать текущей погоде."
+        #         f"если холодно – рекомендуй тёплую одежду, если жарко – лёгкую, если дождь – непромокаемую."
         #     )
         # else:
         #     weather_context = ""
@@ -216,16 +303,15 @@ async def handle_photo(message: Message):
             personal_prompt += f"\n\n{weather_context}"
 
         result = await gemini.analyze_style(image_bytes, personal_prompt)
-        logger.info(f"Gemini result: {result}")  # Добавлено логирование результата
-
-        await message.reply(result)
+        await message.reply(result, reply_markup=get_main_keyboard())
 
         database.increment_requests(user_id)
 
     except Exception as e:
         logger.exception("Ошибка обработки фото: %s", e)
         await message.reply(
-            "Не удалось проанализировать фото. Пожалуйста, отправьте другое, более чёткое изображение в полный рост."
+            "Не удалось проанализировать фото. Пожалуйста, отправьте другое, более чёткое изображение в полный рост.",
+            reply_markup=get_main_keyboard()
         )
 
 # ---- Запуск ----
