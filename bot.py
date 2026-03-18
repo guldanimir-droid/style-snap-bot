@@ -127,9 +127,13 @@ async def ask_manual_city(message: Message):
         reply_markup=ReplyKeyboardRemove()
     )
 
+# Обработчик для ручного ввода города
 @dp.message()
 async def handle_manual_city(message: Message):
     user_id = str(message.from_user.id)
+    # Игнорируем сообщения без текста (например, фото, стикеры)
+    if not message.text:
+        return
     if message.text.startswith('/'):
         return
     user = database.get_user(user_id)
