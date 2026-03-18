@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, LOG_LEVEL, SUPABASE_URL, SUPABASE_KEY, OPENWEATHER_API_KEY
 from gemini_client import GeminiClientWrapper
 from prompts import SYSTEM_PROMPT
-from weather_api import get_weather  # импортируем функцию погоды
+from weather_api import get_weather
 import database
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
@@ -57,14 +57,12 @@ async def cmd_start(message: Message):
         user = database.get_user(user_id)
         logger.info(f"User data: {user}")
 
-        # Если у пользователя уже заполнены пол и стиль – сразу предлагаем фото
         if user.get("gender") and user.get("style_preference"):
             await message.answer(
                 "Привет! Я стилист на базе ИИ. Отправь мне своё фото в полный рост, "
                 "и я оценю твой образ, дам советы и рекомендации с учётом трендов 2026 и российской погоды. Жду фото!"
             )
         else:
-            # Начинаем опрос: сначала пол
             await message.answer(
                 "Привет! Я стилист на базе ИИ. Чтобы советы были точнее, ответь на пару вопросов.\n\n"
                 "Ты парень или девушка?",
@@ -76,7 +74,6 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("setcity"))
 async def cmd_setcity(message: Message):
-    """Команда для смены города"""
     await message.answer(
         "В каком городе ты сейчас находишься? (например, Москва)",
         reply_markup=get_city_keyboard()
@@ -108,7 +105,6 @@ async def set_style(message: Message):
 
 @dp.message(F.text == "Пропустить")
 async def skip_info(message: Message):
-    # Если пользователь пропустил какой-то шаг, просто переходим к фото
     await message.answer(
         "Хорошо, если захочешь заполнить позже — просто напиши /start. А пока отправь фото!",
         reply_markup=ReplyKeyboardRemove()
@@ -128,19 +124,15 @@ async def set_city_from_button(message: Message):
 async def ask_manual_city(message: Message):
     await message.answer(
         "Напиши название своего города (например, Самара):",
-        reply_markup=ReplyKeyboardRemove()  # убираем клавиатуру, ждём ручной ввод
+        reply_markup=ReplyKeyboardRemove()
     )
 
-# Обработчик для ручного ввода города (любой текст)
 @dp.message()
 async def handle_manual_city(message: Message):
     user_id = str(message.from_user.id)
-    # Проверяем, не является ли это командой или другим ожидаемым сообщением
     if message.text.startswith('/'):
-        # Пропускаем команды
         return
     user = database.get_user(user_id)
-    # Если город ещё не установлен, считаем это вводом города
     if user.get("city") is None:
         city = message.text
         database.set_user_info(user_id, city=city)
@@ -149,7 +141,6 @@ async def handle_manual_city(message: Message):
             reply_markup=ReplyKeyboardRemove()
         )
     else:
-        # Если город уже есть, игнорируем или предлагаем команду /setcity
         await message.answer(
             "Я тебя не совсем понял. Если хочешь изменить город, воспользуйся командой /setcity."
         )
@@ -160,14 +151,18 @@ async def handle_manual_city(message: Message):
 async def handle_photo(message: Message):
     user_id = str(message.from_user.id)
 
-    # Проверка лимита
-    if not database.can_request(user_id, limit=3):
-        await message.reply(
-            "❌ Ты сегодня уже проанализировал(а) 3 образа. Хочешь ещё? "
-            "Оформи подписку всего за 250₽/мес — и никаких лимитов! "
-            "Пока это можно сделать, написав @твой_контакт (временно)."
-        )
-        return
+    # Твой user_id (исключение для разработчика)
+    DEVELOPER_ID = "8374306844"
+
+    # Проверка лимита (с исключением для разработчика)
+    if user_id != DEVELOPER_ID:
+        if not database.can_request(user_id, limit=3):
+            await message.reply(
+                "❌ Ты сегодня уже проанализировал(а) 3 образа. Хочешь ещё? "
+                "Оформи подписку всего за 250₽/мес — и никаких лимитов! "
+                "Пока это можно сделать, написав @твой_контакт (временно)."
+            )
+            return
 
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
@@ -184,13 +179,11 @@ async def handle_photo(message: Message):
                     return
                 image_bytes = await resp.read()
 
-        # Получаем данные пользователя для персонализации
         user = database.get_user(user_id)
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
-        city = user.get("city", "Москва")  # если город не указан, используем Москву
+        city = user.get("city", "Москва")
 
-        # Получаем погоду для города
         weather_info = await get_weather(city)
         if weather_info:
             weather_context = (
@@ -203,7 +196,6 @@ async def handle_photo(message: Message):
         else:
             weather_context = ""
 
-        # Формируем персонализированный промпт
         personal_prompt = SYSTEM_PROMPT
         if gender:
             personal_prompt += f"\nПользователь: {gender}."
@@ -215,7 +207,6 @@ async def handle_photo(message: Message):
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         await message.reply(result)
 
-        # Увеличиваем счётчик запросов
         database.increment_requests(user_id)
 
     except Exception as e:
