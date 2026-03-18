@@ -5,7 +5,7 @@ logger = logging.getLogger(__name__)
 
 # TODO: замените на свои партнёрские ID после регистрации
 WILDBERRIES_PARTNER_ID = "3623509"
-OZON_PARTNER_ID = None          # например, "abcde"
+OZON_PARTNER_ID = "0247333695"
 
 def generate_wb_search_url(query: str) -> str:
     """Генерирует ссылку на поиск Wildberries (с партнёрским ID, если он указан)"""
