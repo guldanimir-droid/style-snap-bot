@@ -8,18 +8,17 @@ logger = logging.getLogger(__name__)
 
 async def generate_image(prompt: str) -> Optional[bytes]:
     """
-    Генерирует изображение через Hugging Face Inference API.
+    Генерирует изображение через Hugging Face Inference API (router).
     Возвращает байты изображения или None при ошибке.
-    Использует router.huggingface.co (актуальный endpoint).
-    Модель: stabilityai/stable-diffusion-2-1
+    Использует модель runwayml/stable-diffusion-v1-5 (проверенная бесплатная модель).
     """
     api_token = os.environ.get("HF_TOKEN")
     if not api_token:
         logger.warning("HF_TOKEN not set")
         return None
 
-    # Правильный endpoint (router)
-    api_url = "https://router.huggingface.co/models/stabilityai/stable-diffusion-2-1"
+    # Используем router с моделью runwayml/stable-diffusion-v1-5
+    api_url = "https://router.huggingface.co/models/runwayml/stable-diffusion-v1-5"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
@@ -45,7 +44,7 @@ async def generate_image(prompt: str) -> Optional[bytes]:
                     error_data = await resp.text()
                     logger.info(f"Model loading, waiting 5 seconds... {error_data}")
                     await asyncio.sleep(5)
-                    return await generate_image(prompt)  # рекурсивный повтор
+                    return await generate_image(prompt)
                 else:
                     error_text = await resp.text()
                     logger.error(f"Hugging Face API error {resp.status}: {error_text}")
