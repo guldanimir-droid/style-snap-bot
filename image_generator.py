@@ -6,18 +6,19 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-async def generate_image(prompt: str, retries: int = 2) -> Optional[bytes]:
+async def generate_image(prompt: str) -> Optional[bytes]:
     """
-    Генерирует изображение через Hugging Face Inference API (router).
+    Генерирует изображение через Hugging Face Inference API.
     Возвращает байты изображения или None при ошибке.
-    Использует модель stabilityai/stable-diffusion-2-1.
+    Использует router.huggingface.co (актуальный endpoint).
+    Модель: stabilityai/stable-diffusion-2-1
     """
     api_token = os.environ.get("HF_TOKEN")
     if not api_token:
         logger.warning("HF_TOKEN not set")
         return None
 
-    # Используем актуальный endpoint router
+    # Правильный endpoint (router)
     api_url = "https://router.huggingface.co/models/stabilityai/stable-diffusion-2-1"
     headers = {
         "Authorization": f"Bearer {api_token}",
@@ -31,7 +32,7 @@ async def generate_image(prompt: str, retries: int = 2) -> Optional[bytes]:
         }
     }
 
-    logger.info(f"Calling Hugging Face API for prompt: {prompt[:50]}...")
+    logger.info(f"Calling Hugging Face API (router) for prompt: {prompt[:50]}...")
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(api_url, headers=headers, json=payload) as resp:
@@ -40,15 +41,11 @@ async def generate_image(prompt: str, retries: int = 2) -> Optional[bytes]:
                     logger.info(f"Image generated successfully, size: {len(image_bytes)} bytes")
                     return image_bytes
                 elif resp.status == 503:
-                    # Модель загружается, пробуем через несколько секунд
-                    error_data = await resp.json()
-                    logger.info(f"Model loading, retrying... {error_data}")
-                    if retries > 0:
-                        await asyncio.sleep(5)
-                        return await generate_image(prompt, retries - 1)
-                    else:
-                        logger.error("Model loading timeout")
-                        return None
+                    # Модель загружается, пробуем через 5 секунд
+                    error_data = await resp.text()
+                    logger.info(f"Model loading, waiting 5 seconds... {error_data}")
+                    await asyncio.sleep(5)
+                    return await generate_image(prompt)  # рекурсивный повтор
                 else:
                     error_text = await resp.text()
                     logger.error(f"Hugging Face API error {resp.status}: {error_text}")
