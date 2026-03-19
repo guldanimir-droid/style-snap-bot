@@ -7,16 +7,17 @@ logger = logging.getLogger(__name__)
 
 async def generate_image(prompt: str) -> Optional[bytes]:
     """
-    Генерирует изображение через Hugging Face Inference API.
+    Генерирует изображение через Hugging Face Inference API (router).
     Возвращает байты изображения или None при ошибке.
-    Использует модель stabilityai/stable-diffusion-2-1.
+    Использует модель stabilityai/stable-diffusion-2-1 (доступна бесплатно).
     """
     api_token = os.environ.get("HF_TOKEN")
     if not api_token:
         logger.warning("HF_TOKEN not set")
         return None
 
-    api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1"
+    # Используем актуальный endpoint router.huggingface.co
+    api_url = "https://router.huggingface.co/models/stabilityai/stable-diffusion-2-1"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
@@ -29,12 +30,13 @@ async def generate_image(prompt: str) -> Optional[bytes]:
         }
     }
 
+    logger.info(f"Calling Hugging Face API for prompt: {prompt[:50]}...")
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(api_url, headers=headers, json=payload) as resp:
                 if resp.status == 200:
                     image_bytes = await resp.read()
-                    logger.info(f"Image generated for prompt: {prompt[:50]}...")
+                    logger.info(f"Image generated successfully, size: {len(image_bytes)} bytes")
                     return image_bytes
                 else:
                     error_text = await resp.text()
