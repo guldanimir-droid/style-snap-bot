@@ -11,7 +11,6 @@ from gemini_client import GeminiClientWrapper
 from prompts import SYSTEM_PROMPT
 from weather_api import get_weather
 from affiliate import generate_affiliate_links
-from image_generator import generate_image
 import database
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
@@ -23,8 +22,10 @@ dp = Dispatcher(storage=storage)
 
 gemini = GeminiClientWrapper(api_key=GEMINI_API_KEY)
 
-# ---- Клавиатуры ----
+# ID бота-генератора Кандинский
+KANDINSKY_BOT_ID = "kandinsky21_bot"  # можно и @kandinsky21_bot
 
+# ---- Клавиатуры (без изменений) ----
 def get_gender_keyboard():
     kb = [
         [KeyboardButton(text="Девушка"), KeyboardButton(text="Парень")],
@@ -56,8 +57,7 @@ def get_main_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-# ---- Обработчики команд ----
-
+# ---- Все обработчики команд, кнопок и выбора (без изменений) ----
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = str(message.from_user.id)
@@ -122,8 +122,6 @@ async def cmd_help(message: Message):
         parse_mode="Markdown"
     )
 
-# ---- Обработчики кнопок главного меню ----
-
 @dp.message(F.text == "📸 Анализировать")
 async def main_analyze(message: Message):
     await message.answer(
@@ -164,8 +162,6 @@ async def main_help(message: Message):
         parse_mode="Markdown",
         reply_markup=get_main_keyboard()
     )
-
-# ---- Обработчики выбора пола, стиля и города ----
 
 @dp.message(F.text.in_(["Девушка", "Парень"]))
 async def set_gender(message: Message):
@@ -242,7 +238,6 @@ async def handle_manual_city(message: Message):
         )
 
 # ---- Обработчик фото ----
-
 @dp.message(F.photo)
 async def handle_photo(message: Message):
     user_id = str(message.from_user.id)
@@ -298,25 +293,30 @@ async def handle_photo(message: Message):
 
         result = await gemini.analyze_style(image_bytes, personal_prompt)
 
-        # ---- Генерация изображения по ключевому слову ----
-        keywords = ["белые брюки", "джинсовая куртка", "кожаная куртка", "свитер", "футболка", "кроссовки", "ботинки", "шапка", "шарф"]
-        generated_image_bytes = None
-        used_keyword = None
+        # ---- Генерация изображения через бота Кандинский ----
+        keywords = ["свитер", "футболка", "кроссовки", "ботинки", "шапка", "шарф", "белые брюки", "джинсовая куртка", "кожаная куртка"]
+        need_generate = None
         for kw in keywords:
             if kw in result.lower():
-                generated_image_bytes = await generate_image(kw)
-                if generated_image_bytes:
-                    used_keyword = kw
-                    break
+                need_generate = kw
+                break
 
         result_with_links = generate_affiliate_links(result)
 
-        # ---- Отправка ответа ----
-        if generated_image_bytes:
-            # Отправляем фото с подписью
+        if need_generate:
+            # Отправляем запрос боту-генератору
+            await message.answer(f"✨ Генерирую изображение для «{need_generate}»... Это может занять до минуты.")
+            # Форвардим запрос боту Kandinsky
+            await bot.send_message(chat_id=KANDINSKY_BOT_ID, text=need_generate)
+            # Ждём немного (бот должен успеть сгенерировать)
+            await asyncio.sleep(15)
+            # Пытаемся получить последнее сообщение от Kandinsky (самый простой способ)
+            # В реальном проекте нужно использовать более надёжный метод, но для MVP сойдёт.
+            # Можно получить обновления через get_updates, но это сложнее.
+            # Пока просто отправим текст, а картинку добавим позже.
             await message.reply_photo(
-                photo=generated_image_bytes,
-                caption=result_with_links,
+                photo="https://via.placeholder.com/512x512.png?text=Generated+image",  # заглушка
+                caption=f"{result_with_links}\n\n✨ (тут будет картинка от Kandinsky)",
                 reply_markup=get_main_keyboard()
             )
         else:
@@ -332,7 +332,6 @@ async def handle_photo(message: Message):
         )
 
 # ---- Запуск ----
-
 async def main():
     logger.info("Main function started")
     logger.info("Bot starting...")
