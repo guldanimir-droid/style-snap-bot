@@ -1,23 +1,24 @@
 import os
 import aiohttp
 import logging
+import asyncio
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-async def generate_image(prompt: str) -> Optional[bytes]:
+async def generate_image(prompt: str, retries: int = 2) -> Optional[bytes]:
     """
-    Генерирует изображение через Hugging Face Inference API (router).
+    Генерирует изображение через Hugging Face Inference API.
     Возвращает байты изображения или None при ошибке.
-    Использует модель stabilityai/stable-diffusion-2-1 (доступна бесплатно).
+    Использует модель stabilityai/stable-diffusion-2-1.
     """
     api_token = os.environ.get("HF_TOKEN")
     if not api_token:
         logger.warning("HF_TOKEN not set")
         return None
 
-    # Используем актуальный endpoint router.huggingface.co
-    api_url = "https://router.huggingface.co/models/stabilityai/stable-diffusion-2-1"
+    # Стандартный URL для Inference API
+    api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
@@ -38,6 +39,16 @@ async def generate_image(prompt: str) -> Optional[bytes]:
                     image_bytes = await resp.read()
                     logger.info(f"Image generated successfully, size: {len(image_bytes)} bytes")
                     return image_bytes
+                elif resp.status == 503:
+                    # Модель загружается, пробуем через несколько секунд
+                    error_data = await resp.json()
+                    logger.info(f"Model loading, retrying... {error_data}")
+                    if retries > 0:
+                        await asyncio.sleep(5)
+                        return await generate_image(prompt, retries - 1)
+                    else:
+                        logger.error("Model loading timeout")
+                        return None
                 else:
                     error_text = await resp.text()
                     logger.error(f"Hugging Face API error {resp.status}: {error_text}")
