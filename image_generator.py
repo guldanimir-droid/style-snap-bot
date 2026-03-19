@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 async def generate_image(prompt: str, retries: int = 2) -> Optional[bytes]:
     """
-    Генерирует изображение через Hugging Face Inference API.
+    Генерирует изображение через Hugging Face Inference API (router).
     Возвращает байты изображения или None при ошибке.
     Использует модель stabilityai/stable-diffusion-2-1.
     """
@@ -17,8 +17,8 @@ async def generate_image(prompt: str, retries: int = 2) -> Optional[bytes]:
         logger.warning("HF_TOKEN not set")
         return None
 
-    # Стандартный URL для Inference API
-    api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1"
+    # Используем актуальный endpoint router
+    api_url = "https://router.huggingface.co/models/stabilityai/stable-diffusion-2-1"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
