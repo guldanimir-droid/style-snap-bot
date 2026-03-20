@@ -2,7 +2,7 @@ import asyncio
 import logging
 import aiohttp
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
@@ -24,8 +24,7 @@ dp = Dispatcher(storage=storage)
 
 gemini = GeminiClientWrapper(api_key=GEMINI_API_KEY)
 
-# ---- Клавиатуры ----
-
+# ---- Клавиатуры (reply-клавиатуры, без изменений) ----
 def get_gender_keyboard():
     kb = [
         [KeyboardButton(text="Девушка"), KeyboardButton(text="Парень")],
@@ -74,15 +73,24 @@ def get_color_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
 
-# ---- FSM для добавления вещи ----
+# ---- Inline-клавиатуры ----
+def get_result_keyboard():
+    """Клавиатура под результатом анализа"""
+    buttons = [
+        [InlineKeyboardButton(text="🔄 Ещё совет", callback_data="more_advice")],
+        [InlineKeyboardButton(text="📤 Поделиться", callback_data="share_result")],
+        [InlineKeyboardButton(text="➕ В гардероб", callback_data="add_to_wardrobe")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# ---- FSM для добавления вещи (без изменений) ----
 class AddItemStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_category = State()
     waiting_for_color = State()
     waiting_for_photo = State()
 
-# ---- Обработчики команд ----
-
+# ---- Обработчики команд (без изменений) ----
 @dp.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
@@ -210,7 +218,6 @@ async def add_item_photo(message: Message, state: FSMContext):
         return
     user_id = str(message.from_user.id)
     data = await state.get_data()
-    # фото не сохраняем пока, просто пропускаем
     database.add_wardrobe_item(
         user_id=user_id,
         item_name=data.get("item_name"),
@@ -256,14 +263,13 @@ async def cmd_outfit(message: Message):
     await message.answer("✨ Составляю образы из твоих вещей... Это займёт несколько секунд.")
 
     try:
-        # Временно используем заглушку, так как gemini_client не имеет метода для чистого текста
-        # Позже добавим метод generate_text
+        # Временно заглушка, позже заменим на реальный вызов
         await message.answer("Функция в разработке. Скоро здесь будут готовые образы!")
     except Exception as e:
         logger.exception(f"Error generating outfit: {e}")
         await message.answer("Не удалось составить образ. Попробуй позже.")
 
-# ---- Обработчики кнопок главного меню ----
+# ---- Обработчики кнопок главного меню (без изменений) ----
 @dp.message(F.text == "📸 Анализировать")
 async def main_analyze(message: Message):
     await message.answer(
@@ -308,7 +314,7 @@ async def main_help(message: Message):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Обработчики выбора пола, стиля, города ----
+# ---- Обработчики выбора пола, стиля, города (без изменений) ----
 @dp.message(F.text.in_(["Девушка", "Парень"]))
 async def set_gender(message: Message):
     user_id = str(message.from_user.id)
@@ -383,7 +389,7 @@ async def handle_manual_city(message: Message):
             reply_markup=get_main_keyboard()
         )
 
-# ---- Обработчик фото ----
+# ---- Обработчик фото (с добавлением inline-кнопок) ----
 @dp.message(F.photo)
 async def handle_photo(message: Message):
     user_id = str(message.from_user.id)
@@ -440,7 +446,12 @@ async def handle_photo(message: Message):
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         result_with_links = generate_affiliate_links(result)
 
-        await message.reply(result_with_links, reply_markup=get_main_keyboard())
+        # Отправляем результат с inline-клавиатурой
+        await message.reply(
+            result_with_links,
+            reply_markup=get_result_keyboard(),
+            parse_mode="HTML"  # можно использовать Markdown, но ссылки и так есть
+        )
 
         database.increment_requests(user_id)
 
@@ -451,12 +462,43 @@ async def handle_photo(message: Message):
             reply_markup=get_main_keyboard()
         )
 
+# ---- Обработчики inline-кнопок ----
+@dp.callback_query(lambda c: c.data == "more_advice")
+async def more_advice_callback(callback: CallbackQuery):
+    await callback.answer("Советую отправить новое фото для анализа!", show_alert=False)
+    await callback.message.answer("📸 Отправь мне другое фото, и я снова проанализирую твой образ.")
+    await callback.message.delete()  # удаляем сообщение с кнопками (чтобы не мешало)
+
+@dp.callback_query(lambda c: c.data == "share_result")
+async def share_result_callback(callback: CallbackQuery):
+    # Копируем текст последнего сообщения (или генерируем ссылку на пост)
+    # Упрощённо: копируем текст ответа бота
+    text = callback.message.text
+    # Можно сформировать текст для публикации
+    await callback.answer("Текст скопирован!", show_alert=False)
+    # Отправляем сообщение с текстом для копирования
+    await callback.message.answer(
+        "📤 *Результат для публикации:*\n"
+        f"{text}\n\n"
+        "Скопируйте текст и поделитесь с друзьями!",
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "add_to_wardrobe")
+async def add_to_wardrobe_callback(callback: CallbackQuery):
+    # Парсить текст на наличие названий вещей сложно, для простоты предложим добавить через команду
+    await callback.answer("Добавление в гардероб", show_alert=False)
+    await callback.message.answer(
+        "➕ Чтобы добавить вещь в гардероб, используй команду `/additem`.\n"
+        "Например: `/additem` → затем введи название, категорию и цвет."
+    )
+
 # ---- Запуск ----
 async def main():
     logger.info("Main function started")
     logger.info("Bot starting...")
     await bot.delete_webhook(drop_pending_updates=True)
-    # Важное изменение: drop_pending_updates=True
     await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
