@@ -1,4 +1,5 @@
 meta:
+  toolchain: python
   version: 3.11
 build:
   requirementsPath: requirements.txt
