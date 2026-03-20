@@ -1,0 +1,6 @@
+meta:
+  version: 3.11
+build:
+  requirementsPath: requirements.txt
+run:
+  command: python bot.py
