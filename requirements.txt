@@ -3,3 +3,4 @@ aiohttp==3.9.0
 python-dotenv==1.0.0
 supabase==1.2.0
 huggingface_hub==0.24.0
+Pillow==10.0.0
