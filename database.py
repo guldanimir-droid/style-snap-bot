@@ -1,23 +1,19 @@
 import os
 from datetime import date
 from supabase import create_client, Client
+from dotenv import load_dotenv
 
-# Отладка: выводим все переменные окружения
-print("=== DEBUG: All environment variables ===")
-for key, value in os.environ.items():
-    # Не выводим значения ключей полностью, чтобы не засорять логи, но покажем имена
-    print(f"{key} = {'set' if value else 'empty'}")
+load_dotenv()
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-print(f"SUPABASE_URL = {SUPABASE_URL}")
-print(f"SUPABASE_KEY = {'set' if SUPABASE_KEY else 'NOT SET'}")
-
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
+    raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ---- Пользователи ----
 
 def get_user(user_id: str):
     response = supabase.table("users").select("*").eq("user_id", user_id).execute()
@@ -62,3 +58,24 @@ def set_user_info(user_id: str, gender: str = None, style: str = None, city: str
         data["city"] = city
     if data:
         update_user(user_id, data)
+
+# ---- Гардероб ----
+
+def add_wardrobe_item(user_id: str, item_name: str, category: str = None, color: str = None, image_url: str = None):
+    """Добавляет вещь в гардероб пользователя"""
+    supabase.table("wardrobe").insert({
+        "user_id": user_id,
+        "item_name": item_name,
+        "category": category,
+        "color": color,
+        "image_url": image_url
+    }).execute()
+
+def get_user_wardrobe(user_id: str):
+    """Возвращает все вещи пользователя"""
+    response = supabase.table("wardrobe").select("*").eq("user_id", user_id).execute()
+    return response.data
+
+def delete_wardrobe_item(item_id: int):
+    """Удаляет вещь по id (можно добавить позже)"""
+    supabase.table("wardrobe").delete().eq("id", item_id).execute()
