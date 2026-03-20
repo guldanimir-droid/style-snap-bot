@@ -2,7 +2,7 @@ import asyncio
 import logging
 import aiohttp
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
@@ -153,7 +153,6 @@ async def cmd_help(message: Message):
 
 @dp.message(Command("additem"))
 async def cmd_additem(message: Message, state: FSMContext):
-    """Начинает процесс добавления вещи в гардероб"""
     await state.set_state(AddItemStates.waiting_for_name)
     await message.answer(
         "Добавляем вещь в гардероб. Напиши название (например, 'свитер', 'джинсы'):",
@@ -211,8 +210,7 @@ async def add_item_photo(message: Message, state: FSMContext):
         return
     user_id = str(message.from_user.id)
     data = await state.get_data()
-    # Получаем ссылку на фото (можно сохранить URL, но пока сохраним без)
-    # В будущем можно сохранить ссылку, загрузив фото в облако
+    # фото не сохраняем пока, просто пропускаем
     database.add_wardrobe_item(
         user_id=user_id,
         item_name=data.get("item_name"),
@@ -243,14 +241,12 @@ async def cmd_outfit(message: Message):
         await message.answer("У тебя пока нет вещей в гардеробе. Добавь через /additem.")
         return
 
-    # Формируем промпт для Gemini на основе вещей
     items_text = "\n".join([f"- {item['item_name']} ({item.get('category', '?')}, {item.get('color', '?')})" for item in items])
     prompt = f"""У меня есть следующие вещи в гардеробе:
 {items_text}
 
 Составь 2-3 варианта образов из этих вещей (можно использовать некоторые вещи не обязательно все). Для каждого варианта дай краткое описание и совет, куда можно пойти в таком образе. Учитывай текущую погоду (если передана)."""
 
-    # Получаем данные пользователя для погоды и стиля
     user = database.get_user(user_id)
     city = user.get("city", "Москва")
     weather_info = await get_weather(city)
@@ -260,31 +256,14 @@ async def cmd_outfit(message: Message):
     await message.answer("✨ Составляю образы из твоих вещей... Это займёт несколько секунд.")
 
     try:
-        # Используем Gemini для генерации идей
-        # Так как анализировать фото не нужно, передаём пустое изображение и текстовый запрос
-        # Можно использовать отдельный метод в gemini_client
-        # Упрощённо: просто отправляем текст, но gemini_client.analyze_style ожидает изображение.
-        # Поэтому создадим отдельную функцию или адаптируем.
-        # Временно воспользуемся тем же методом, передав пустое изображение.
-        # Но лучше добавить в gemini_client метод для текста.
-        # Для простоты создадим временный объект и отправим только текст.
-        # В gemini_client уже есть метод generate_content, но мы его не экспортируем.
-        # Добавим новую функцию в gemini_client.py: generate_text(prompt)
-        # Сейчас сделаем обходной путь: используем Gemini через прямую отправку текста без изображения.
-        # Но проще добавить функцию в gemini_client.
-        # Я добавлю её ниже.
-
-        # Временно используем старый метод с пустым изображением, но это неэффективно.
-        # Пока сделаем заглушку, а потом добавим правильный метод.
-
-        # Вместо этого создадим новый метод в gemini_client.py для текстовых запросов.
-        # Пока просто выведем сообщение.
+        # Временно используем заглушку, так как gemini_client не имеет метода для чистого текста
+        # Позже добавим метод generate_text
         await message.answer("Функция в разработке. Скоро здесь будут готовые образы!")
     except Exception as e:
         logger.exception(f"Error generating outfit: {e}")
         await message.answer("Не удалось составить образ. Попробуй позже.")
 
-# ---- Обработчики кнопок главного меню (остаются без изменений) ----
+# ---- Обработчики кнопок главного меню ----
 @dp.message(F.text == "📸 Анализировать")
 async def main_analyze(message: Message):
     await message.answer(
@@ -329,7 +308,7 @@ async def main_help(message: Message):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Обработчики выбора пола, стиля, города (остаются без изменений) ----
+# ---- Обработчики выбора пола, стиля, города ----
 @dp.message(F.text.in_(["Девушка", "Парень"]))
 async def set_gender(message: Message):
     user_id = str(message.from_user.id)
@@ -459,8 +438,6 @@ async def handle_photo(message: Message):
             personal_prompt += f"\n\n{weather_context}"
 
         result = await gemini.analyze_style(image_bytes, personal_prompt)
-
-        # ---- Генерация изображения (отключена) ----
         result_with_links = generate_affiliate_links(result)
 
         await message.reply(result_with_links, reply_markup=get_main_keyboard())
@@ -479,7 +456,8 @@ async def main():
     logger.info("Main function started")
     logger.info("Bot starting...")
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    # Важное изменение: drop_pending_updates=True
+    await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
