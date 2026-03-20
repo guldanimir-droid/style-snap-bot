@@ -79,3 +79,20 @@ def get_user_wardrobe(user_id: str):
 def delete_wardrobe_item(item_id: int):
     """Удаляет вещь по id (можно добавить позже)"""
     supabase.table("wardrobe").delete().eq("id", item_id).execute()
+# ---- Избранное ----
+
+def add_favorite(user_id: str, result_text: str):
+    """Сохраняет результат анализа в избранное"""
+    supabase.table("favorites").insert({
+        "user_id": user_id,
+        "result_text": result_text
+    }).execute()
+
+def get_favorites(user_id: str):
+    """Возвращает список избранных результатов пользователя (сортировка по дате, новые сверху)"""
+    response = supabase.table("favorites").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+    return response.data
+
+def delete_favorite(favorite_id: int):
+    """Удаляет запись из избранного по её id"""
+    supabase.table("favorites").delete().eq("id", favorite_id).execute()
