@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import aiohttp
+import re
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
@@ -14,6 +15,7 @@ from prompts import SYSTEM_PROMPT
 from weather_api import get_weather
 from affiliate import generate_affiliate_links
 import database
+import image_utils
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -24,7 +26,10 @@ dp = Dispatcher(storage=storage)
 
 gemini = GeminiClientWrapper(api_key=GEMINI_API_KEY)
 
-# ---- Клавиатуры (reply-клавиатуры, без изменений) ----
+# ---- Словарь для хранения последнего результата анализа (временный) ----
+last_results = {}  # key: user_id, value: result_text
+
+# ---- Клавиатуры (остаются без изменений) ----
 def get_gender_keyboard():
     kb = [
         [KeyboardButton(text="Девушка"), KeyboardButton(text="Парень")],
@@ -73,13 +78,13 @@ def get_color_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
 
-# ---- Inline-клавиатуры ----
+# ---- Inline-клавиатура (с новой кнопкой) ----
 def get_result_keyboard():
-    """Клавиатура под результатом анализа"""
     buttons = [
         [InlineKeyboardButton(text="🔄 Ещё совет", callback_data="more_advice")],
         [InlineKeyboardButton(text="📤 Поделиться", callback_data="share_result")],
-        [InlineKeyboardButton(text="➕ В гардероб", callback_data="add_to_wardrobe")]
+        [InlineKeyboardButton(text="➕ В гардероб", callback_data="add_to_wardrobe")],
+        [InlineKeyboardButton(text="⭐ В избранное", callback_data="save_favorite")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -90,12 +95,15 @@ class AddItemStates(StatesGroup):
     waiting_for_color = State()
     waiting_for_photo = State()
 
-# ---- Обработчики команд (без изменений) ----
+# ---- Обработчики команд (без изменений, кроме /start - можно добавить очистку) ----
 @dp.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     logger.info(f"Start command from user {user_id}")
     await state.clear()
+    # Очищаем временный результат
+    if user_id in last_results:
+        del last_results[user_id]
     try:
         user = database.get_user(user_id)
         logger.info(f"User data: {user}")
@@ -155,6 +163,7 @@ async def cmd_help(message: Message):
         "/additem — добавить вещь в гардероб\n"
         "/wardrobe — показать мои вещи\n"
         "/outfit — составить образ из моих вещей\n"
+        "/favorites — показать сохранённые образы\n"
         "/help — эта справка",
         parse_mode="Markdown"
     )
@@ -269,6 +278,18 @@ async def cmd_outfit(message: Message):
         logger.exception(f"Error generating outfit: {e}")
         await message.answer("Не удалось составить образ. Попробуй позже.")
 
+@dp.message(Command("favorites"))
+async def cmd_favorites(message: Message):
+    user_id = str(message.from_user.id)
+    favorites = database.get_favorites(user_id)
+    if not favorites:
+        await message.answer("У тебя пока нет сохранённых образов.")
+        return
+    text = "⭐ *Сохранённые образы:*\n\n"
+    for idx, fav in enumerate(favorites[:10], 1):  # показываем не более 10
+        text += f"{idx}. {fav['result_text'][:100]}...\n"
+    await message.answer(text, parse_mode="Markdown")
+
 # ---- Обработчики кнопок главного меню (без изменений) ----
 @dp.message(F.text == "📸 Анализировать")
 async def main_analyze(message: Message):
@@ -309,6 +330,7 @@ async def main_help(message: Message):
         "/additem — добавить вещь в гардероб\n"
         "/wardrobe — показать мои вещи\n"
         "/outfit — составить образ из моих вещей\n"
+        "/favorites — показать сохранённые образы\n"
         "/help — эта справка",
         parse_mode="Markdown",
         reply_markup=get_main_keyboard()
@@ -389,7 +411,7 @@ async def handle_manual_city(message: Message):
             reply_markup=get_main_keyboard()
         )
 
-# ---- Обработчик фото (с добавлением inline-кнопок) ----
+# ---- Обработчик фото (сохраняем результат) ----
 @dp.message(F.photo)
 async def handle_photo(message: Message):
     user_id = str(message.from_user.id)
@@ -446,11 +468,13 @@ async def handle_photo(message: Message):
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         result_with_links = generate_affiliate_links(result)
 
-        # Отправляем результат с inline-клавиатурой
+        # Сохраняем результат для последующих callback
+        last_results[user_id] = result_with_links
+
         await message.reply(
             result_with_links,
             reply_markup=get_result_keyboard(),
-            parse_mode="HTML"  # можно использовать Markdown, но ссылки и так есть
+            parse_mode="HTML"
         )
 
         database.increment_requests(user_id)
@@ -467,32 +491,95 @@ async def handle_photo(message: Message):
 async def more_advice_callback(callback: CallbackQuery):
     await callback.answer("Советую отправить новое фото для анализа!", show_alert=False)
     await callback.message.answer("📸 Отправь мне другое фото, и я снова проанализирую твой образ.")
-    await callback.message.delete()  # удаляем сообщение с кнопками (чтобы не мешало)
+    await callback.message.delete()
 
 @dp.callback_query(lambda c: c.data == "share_result")
 async def share_result_callback(callback: CallbackQuery):
-    # Копируем текст последнего сообщения (или генерируем ссылку на пост)
-    # Упрощённо: копируем текст ответа бота
-    text = callback.message.text
-    # Можно сформировать текст для публикации
-    await callback.answer("Текст скопирован!", show_alert=False)
-    # Отправляем сообщение с текстом для копирования
-    await callback.message.answer(
-        "📤 *Результат для публикации:*\n"
-        f"{text}\n\n"
-        "Скопируйте текст и поделитесь с друзьями!",
-        parse_mode="Markdown"
-    )
-    await callback.answer()
+    user_id = str(callback.from_user.id)
+    result = last_results.get(user_id)
+    if not result:
+        await callback.answer("Не найден результат анализа. Отправьте новое фото.", show_alert=True)
+        return
+    # Генерируем картинку с текстом
+    try:
+        img_bytes = image_utils.create_result_image(result)
+        # Отправляем как фото
+        await callback.message.answer_photo(
+            photo=img_bytes,
+            caption="✨ Твой результат в виде картинки для публикации! ✨"
+        )
+        await callback.answer("Картинка готова!", show_alert=False)
+    except Exception as e:
+        logger.exception("Ошибка генерации картинки")
+        await callback.answer("Не удалось создать картинку. Попробуйте позже.", show_alert=True)
+    await callback.message.delete()
 
 @dp.callback_query(lambda c: c.data == "add_to_wardrobe")
 async def add_to_wardrobe_callback(callback: CallbackQuery):
-    # Парсить текст на наличие названий вещей сложно, для простоты предложим добавить через команду
-    await callback.answer("Добавление в гардероб", show_alert=False)
-    await callback.message.answer(
-        "➕ Чтобы добавить вещь в гардероб, используй команду `/additem`.\n"
-        "Например: `/additem` → затем введи название, категорию и цвет."
-    )
+    user_id = str(callback.from_user.id)
+    result = last_results.get(user_id)
+    if not result:
+        await callback.answer("Не найден результат анализа. Отправьте новое фото.", show_alert=True)
+        return
+    # Простой парсинг: ищем слова из списка одежды и цвета
+    clothes_keywords = ["свитер", "футболка", "брюки", "джинсы", "куртка", "пальто", "шарф", "шапка", "ботинки", "кроссовки"]
+    colors = ["белый", "черный", "серый", "синий", "красный", "зеленый", "желтый", "коричневый", "бежевый"]
+    detected_items = []
+    # Ищем в тексте
+    lower_text = result.lower()
+    for word in clothes_keywords:
+        if word in lower_text:
+            # Ищем цвет рядом
+            color = None
+            for col in colors:
+                if col in lower_text:
+                    color = col
+                    break
+            detected_items.append({"name": word, "color": color})
+    if not detected_items:
+        # Если не нашли, предложим ввести вручную
+        await callback.message.answer(
+            "Не удалось определить вещь из текста. Пожалуйста, добавьте вещь вручную через команду `/additem`.",
+            reply_markup=get_main_keyboard()
+        )
+        await callback.answer()
+        await callback.message.delete()
+        return
+    # Показываем найденные варианты
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{item['name']} ({item['color'] or 'цвет не указан'})", callback_data=f"add_item_{item['name']}_{item['color']}") for item in detected_items],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_add")]
+    ])
+    await callback.message.answer("Найдены возможные вещи. Выберите для добавления в гардероб:", reply_markup=keyboard)
+    await callback.answer()
+    await callback.message.delete()
+
+@dp.callback_query(lambda c: c.data.startswith("add_item_"))
+async def confirm_add_item(callback: CallbackQuery):
+    data = callback.data.split("_")
+    item_name = data[2]
+    color = data[3] if len(data) > 3 else None
+    user_id = str(callback.from_user.id)
+    # Добавляем в гардероб с категорией "Другое" (можно уточнить позже)
+    database.add_wardrobe_item(user_id=user_id, item_name=item_name, category="Другое", color=color)
+    await callback.answer(f"Вещь «{item_name}» добавлена в гардероб!", show_alert=False)
+    await callback.message.edit_text(f"✅ Вещь «{item_name}» добавлена в гардероб!")
+
+@dp.callback_query(lambda c: c.data == "cancel_add")
+async def cancel_add_callback(callback: CallbackQuery):
+    await callback.message.delete()
+    await callback.answer("Добавление отменено.")
+
+@dp.callback_query(lambda c: c.data == "save_favorite")
+async def save_favorite_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    result = last_results.get(user_id)
+    if not result:
+        await callback.answer("Не найден результат анализа. Отправьте новое фото.", show_alert=True)
+        return
+    database.add_favorite(user_id, result)
+    await callback.answer("Результат сохранён в избранное!", show_alert=False)
+    await callback.message.delete()
 
 # ---- Запуск ----
 async def main():
@@ -502,4 +589,5 @@ async def main():
     await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
+    asyncio.run(main())
     asyncio.run(main())
