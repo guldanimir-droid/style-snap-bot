@@ -1,6 +1,6 @@
 meta:
   toolchain: python
-  version: 3.11
+  version: "3.11"
 build:
   requirementsPath: requirements.txt
 run:
