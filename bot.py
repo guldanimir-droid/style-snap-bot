@@ -471,11 +471,13 @@ async def handle_photo(message: Message):
         # Сохраняем результат для последующих callback
         last_results[user_id] = result_with_links
 
+        logger.info("Sending message with inline keyboard")
         await message.reply(
             result_with_links,
             reply_markup=get_result_keyboard(),
             parse_mode="HTML"
         )
+        logger.info("Message with keyboard sent")
 
         database.increment_requests(user_id)
 
