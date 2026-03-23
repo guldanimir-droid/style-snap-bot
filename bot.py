@@ -29,7 +29,7 @@ gemini = GeminiClientWrapper(api_key=GEMINI_API_KEY)
 # ---- Словарь для хранения последнего результата анализа (временный) ----
 last_results = {}  # key: user_id, value: result_text
 
-# ---- Клавиатуры (остаются без изменений) ----
+# ---- Клавиатуры ----
 def get_gender_keyboard():
     kb = [
         [KeyboardButton(text="Девушка"), KeyboardButton(text="Парень")],
@@ -78,8 +78,8 @@ def get_color_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
 
-# ---- Inline-клавиатура (с новой кнопкой) ----
 def get_result_keyboard():
+    """Inline-клавиатура для результатов анализа"""
     buttons = [
         [InlineKeyboardButton(text="🔄 Ещё совет", callback_data="more_advice")],
         [InlineKeyboardButton(text="📤 Поделиться", callback_data="share_result")],
@@ -88,20 +88,19 @@ def get_result_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---- FSM для добавления вещи (без изменений) ----
+# ---- FSM для добавления вещи ----
 class AddItemStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_category = State()
     waiting_for_color = State()
     waiting_for_photo = State()
 
-# ---- Обработчики команд (без изменений, кроме /start - можно добавить очистку) ----
+# ---- Обработчики команд ----
 @dp.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     logger.info(f"Start command from user {user_id}")
     await state.clear()
-    # Очищаем временный результат
     if user_id in last_results:
         del last_results[user_id]
     try:
@@ -272,7 +271,7 @@ async def cmd_outfit(message: Message):
     await message.answer("✨ Составляю образы из твоих вещей... Это займёт несколько секунд.")
 
     try:
-        # Временно заглушка, позже заменим на реальный вызов
+        # Заглушка
         await message.answer("Функция в разработке. Скоро здесь будут готовые образы!")
     except Exception as e:
         logger.exception(f"Error generating outfit: {e}")
@@ -286,11 +285,11 @@ async def cmd_favorites(message: Message):
         await message.answer("У тебя пока нет сохранённых образов.")
         return
     text = "⭐ *Сохранённые образы:*\n\n"
-    for idx, fav in enumerate(favorites[:10], 1):  # показываем не более 10
+    for idx, fav in enumerate(favorites[:10], 1):
         text += f"{idx}. {fav['result_text'][:100]}...\n"
     await message.answer(text, parse_mode="Markdown")
 
-# ---- Обработчики кнопок главного меню (без изменений) ----
+# ---- Обработчики кнопок главного меню ----
 @dp.message(F.text == "📸 Анализировать")
 async def main_analyze(message: Message):
     await message.answer(
@@ -336,7 +335,7 @@ async def main_help(message: Message):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Обработчики выбора пола, стиля, города (без изменений) ----
+# ---- Обработчики выбора пола, стиля, города ----
 @dp.message(F.text.in_(["Девушка", "Парень"]))
 async def set_gender(message: Message):
     user_id = str(message.from_user.id)
@@ -411,7 +410,7 @@ async def handle_manual_city(message: Message):
             reply_markup=get_main_keyboard()
         )
 
-# ---- Обработчик фото (сохраняем результат) ----
+# ---- Обработчик фото (с inline-клавиатурой) ----
 @dp.message(F.photo)
 async def handle_photo(message: Message):
     user_id = str(message.from_user.id)
@@ -468,16 +467,19 @@ async def handle_photo(message: Message):
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         result_with_links = generate_affiliate_links(result)
 
-        # Сохраняем результат для последующих callback
+        # Сохраняем результат
         last_results[user_id] = result_with_links
 
+        # Отладочный лог
         logger.info("Sending message with inline keyboard")
+
         await message.reply(
             result_with_links,
             reply_markup=get_result_keyboard(),
             parse_mode="HTML"
         )
-        logger.info("Message with keyboard sent")
+
+        logger.info("Message sent")
 
         database.increment_requests(user_id)
 
@@ -502,10 +504,8 @@ async def share_result_callback(callback: CallbackQuery):
     if not result:
         await callback.answer("Не найден результат анализа. Отправьте новое фото.", show_alert=True)
         return
-    # Генерируем картинку с текстом
     try:
         img_bytes = image_utils.create_result_image(result)
-        # Отправляем как фото
         await callback.message.answer_photo(
             photo=img_bytes,
             caption="✨ Твой результат в виде картинки для публикации! ✨"
@@ -523,15 +523,12 @@ async def add_to_wardrobe_callback(callback: CallbackQuery):
     if not result:
         await callback.answer("Не найден результат анализа. Отправьте новое фото.", show_alert=True)
         return
-    # Простой парсинг: ищем слова из списка одежды и цвета
     clothes_keywords = ["свитер", "футболка", "брюки", "джинсы", "куртка", "пальто", "шарф", "шапка", "ботинки", "кроссовки"]
     colors = ["белый", "черный", "серый", "синий", "красный", "зеленый", "желтый", "коричневый", "бежевый"]
     detected_items = []
-    # Ищем в тексте
     lower_text = result.lower()
     for word in clothes_keywords:
         if word in lower_text:
-            # Ищем цвет рядом
             color = None
             for col in colors:
                 if col in lower_text:
@@ -539,7 +536,6 @@ async def add_to_wardrobe_callback(callback: CallbackQuery):
                     break
             detected_items.append({"name": word, "color": color})
     if not detected_items:
-        # Если не нашли, предложим ввести вручную
         await callback.message.answer(
             "Не удалось определить вещь из текста. Пожалуйста, добавьте вещь вручную через команду `/additem`.",
             reply_markup=get_main_keyboard()
@@ -547,11 +543,18 @@ async def add_to_wardrobe_callback(callback: CallbackQuery):
         await callback.answer()
         await callback.message.delete()
         return
-    # Показываем найденные варианты
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"{item['name']} ({item['color'] or 'цвет не указан'})", callback_data=f"add_item_{item['name']}_{item['color']}") for item in detected_items],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_add")]
-    ])
+    # Группируем кнопки по две
+    buttons = []
+    row = []
+    for item in detected_items[:6]:
+        row.append(InlineKeyboardButton(text=f"{item['name']} ({item['color'] or '?'})", callback_data=f"add_item_{item['name']}_{item['color']}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_add")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await callback.message.answer("Найдены возможные вещи. Выберите для добавления в гардероб:", reply_markup=keyboard)
     await callback.answer()
     await callback.message.delete()
@@ -562,7 +565,6 @@ async def confirm_add_item(callback: CallbackQuery):
     item_name = data[2]
     color = data[3] if len(data) > 3 else None
     user_id = str(callback.from_user.id)
-    # Добавляем в гардероб с категорией "Другое" (можно уточнить позже)
     database.add_wardrobe_item(user_id=user_id, item_name=item_name, category="Другое", color=color)
     await callback.answer(f"Вещь «{item_name}» добавлена в гардероб!", show_alert=False)
     await callback.message.edit_text(f"✅ Вещь «{item_name}» добавлена в гардероб!")
