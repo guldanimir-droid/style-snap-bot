@@ -473,10 +473,16 @@ async def handle_photo(message: Message):
         # Отладочный лог
         logger.info("Sending message with inline keyboard")
 
+        # Отправляем основной ответ БЕЗ parse_mode, чтобы исключить ошибки форматирования
         await message.reply(
             result_with_links,
-            reply_markup=get_result_keyboard(),
-            parse_mode="HTML"
+            reply_markup=get_result_keyboard()
+        )
+
+        # Дополнительно отправляем тестовое сообщение с клавиатурой (для проверки)
+        await message.answer(
+            "Тест клавиатуры (должна появиться)",
+            reply_markup=get_result_keyboard()
         )
 
         logger.info("Message sent")
@@ -543,7 +549,6 @@ async def add_to_wardrobe_callback(callback: CallbackQuery):
         await callback.answer()
         await callback.message.delete()
         return
-    # Группируем кнопки по две
     buttons = []
     row = []
     for item in detected_items[:6]:
