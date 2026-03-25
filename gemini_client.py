@@ -5,8 +5,8 @@ import json
 class GeminiClientWrapper:
     def __init__(self, api_key: str):
         self.api_key = api_key
-        # Используем v1beta и модель gemini-1.5-flash
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        # Используем v1beta и модель gemini-2.0-flash (работала ранее)
+        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
         # Кодируем изображение в base64
