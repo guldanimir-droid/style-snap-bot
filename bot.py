@@ -410,13 +410,19 @@ async def handle_manual_city(message: Message):
             reply_markup=get_main_keyboard()
         )
 
-# ---- Обработчик фото (с inline-клавиатурой) ----
+# ---- Обработчик фото (с inline-клавиатурой и проверкой размера) ----
 @dp.message(F.photo)
 async def handle_photo(message: Message):
     user_id = str(message.from_user.id)
     logger.info(f"Photo handler called for user {user_id}")
 
-    DEVELOPER_ID = "8374306844"
+    # Проверка размера фото (не более 5 МБ)
+    photo = message.photo[-1]
+    if photo.file_size > 5 * 1024 * 1024:
+        await message.reply("Фото слишком большое (более 5 МБ). Пожалуйста, отправьте изображение поменьше.")
+        return
+
+    # Исключение для разработчика (лимиты не применяются)
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id, limit=3):
             await message.reply(
@@ -426,7 +432,6 @@ async def handle_photo(message: Message):
             )
             return
 
-    photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
     file_path = file.file_path
     file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
