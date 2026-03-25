@@ -2,13 +2,13 @@ import aiohttp
 import base64
 import json
 import os
+import asyncio
 
 class GeminiClientWrapper:
     def __init__(self, api_key: str = None):
-        # Для HF api_key не нужен, но оставим для совместимости
         self.api_key = api_key
         self.hf_token = os.environ.get("HF_TOKEN")
-        # Используем мультимодальную модель Qwen2-VL-7B (бесплатно, хорошо понимает русский)
+        # Мультимодальная модель, хорошо понимает русский язык
         self.model = "Qwen/Qwen2-VL-7B-Instruct"
 
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
@@ -18,7 +18,7 @@ class GeminiClientWrapper:
         img_base64 = base64.b64encode(image_bytes).decode('utf-8')
         data_url = f"data:image/jpeg;base64,{img_base64}"
 
-        # Формируем запрос для HF Inference API
+        # Формат запроса для Qwen2-VL (chat template)
         payload = {
             "inputs": [
                 {
@@ -28,7 +28,11 @@ class GeminiClientWrapper:
                         {"type": "text", "text": system_prompt}
                     ]
                 }
-            ]
+            ],
+            "parameters": {
+                "max_new_tokens": 1024,
+                "temperature": 0.7
+            }
         }
 
         headers = {
@@ -42,13 +46,19 @@ class GeminiClientWrapper:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    # Извлекаем текст ответа
+                    # Qwen2-VL возвращает список сообщений
                     try:
-                        return data["choices"][0]["message"]["content"]
-                    except (KeyError, IndexError):
+                        # Обычно ответ в data[0]['generated_text'] или data[0]['content']
+                        if isinstance(data, list) and len(data) > 0:
+                            if 'generated_text' in data[0]:
+                                return data[0]['generated_text']
+                            elif 'content' in data[0]:
+                                return data[0]['content']
                         return str(data)
+                    except Exception as e:
+                        raise Exception(f"Unexpected HF response: {data}")
                 elif resp.status == 503:
-                    # Модель загружается
+                    # Модель загружается – ждём и повторяем
                     await asyncio.sleep(5)
                     return await self.analyze_style(image_bytes, system_prompt)
                 else:
