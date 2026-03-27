@@ -109,20 +109,18 @@ async def cmd_start(message: Message, state: FSMContext):
         user = database.get_user(user_id)
         if not user.get("gender") or not user.get("style_preference"):
             await message.answer(
-                "🌟 <b>Привет! Я твой персональный AI-стилист!</b>\n\n"
+                "🌟 Привет! Я твой персональный AI-стилист!\n\n"
                 "Чтобы давать максимально точные советы, давай познакомимся поближе.\n"
                 "Ответь на пару вопросов — это займёт всего минуту.\n\n"
-                "👇 <b>Ты парень или девушка?</b>",
-                parse_mode="HTML",
+                "👇 Ты парень или девушка?",
                 reply_markup=get_gender_keyboard()
             )
         else:
             await message.answer(
-                "✨ <b>Снова рад тебя видеть!</b>\n\n"
+                "✨ Снова рад тебя видеть!\n\n"
                 "Отправь мне своё фото в полный рост, и я оценю твой образ, дам советы "
                 "и подберу вещи с учётом трендов 2026.\n\n"
-                "📸 <b>Жду фото!</b>",
-                parse_mode="HTML",
+                "📸 Жду фото!",
                 reply_markup=get_main_keyboard()
             )
     except Exception as e:
@@ -134,12 +132,11 @@ async def cmd_profile(message: Message):
     user_id = str(message.from_user.id)
     user = database.get_user(user_id)
     await message.answer(
-        f"👤 <b>Твой профиль</b>\n\n"
+        f"👤 Твой профиль\n\n"
         f"• Пол: {user.get('gender', 'не указан')}\n"
         f"• Стиль: {user.get('style_preference', 'не указан')}\n"
         f"• 📊 Бесплатных анализов осталось: {max(0, 3 - user.get('total_free_requests', 0))}\n"
         f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}",
-        parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
 
@@ -155,23 +152,22 @@ async def cmd_premium(message: Message):
         used = database.get_user(user_id).get("total_free_requests", 0)
         remaining = max(0, 3 - used)
         await message.answer(
-            f"🔓 У вас осталось <b>{remaining}</b> бесплатных анализов из 3.\n\n"
-            "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n"
-            "💰 <b>Разовый анализ</b> — 50₽ за фото\n\n"
+            f"🔓 У вас осталось {remaining} бесплатных анализов из 3.\n\n"
+            "💎 Премиум-подписка — 299₽/мес, безлимит\n"
+            "💰 Разовый анализ — 50₽ за фото\n\n"
             "Нажмите соответствующую кнопку в главном меню, чтобы оплатить.",
-            parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     await message.answer(
-        "💡 <b>Как пользоваться ботом</b>\n\n"
+        "💡 Как пользоваться ботом\n\n"
         "1️⃣ Отправь фото в полный рост\n"
         "2️⃣ Получи разбор образа с оценкой и советами\n"
         "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
         "4️⃣ Добавляй вещи в виртуальный гардероб\n\n"
-        "<b>Команды:</b>\n"
+        "Команды:\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
         "/premium — информация о подписке\n"
@@ -180,7 +176,6 @@ async def cmd_help(message: Message):
         "/outfit — составить образ из моих вещей\n"
         "/favorites — показать сохранённые образы\n"
         "/help — эта справка",
-        parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
 
@@ -271,10 +266,10 @@ async def cmd_wardrobe(message: Message):
             reply_markup=get_main_keyboard()
         )
         return
-    text = "👕 <b>Твой гардероб:</b>\n\n"
+    text = "👕 Твой гардероб:\n\n"
     for idx, item in enumerate(items, 1):
         text += f"{idx}. {item.get('item_name')} ({item.get('category', 'нет категории')}, {item.get('color', 'нет цвета')})\n"
-    await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
+    await message.answer(text, reply_markup=get_main_keyboard())
 
 @dp.message(Command("outfit"))
 async def cmd_outfit(message: Message):
@@ -318,10 +313,10 @@ async def cmd_favorites(message: Message):
             reply_markup=get_main_keyboard()
         )
         return
-    text = "⭐ <b>Сохранённые образы:</b>\n\n"
+    text = "⭐ Сохранённые образы:\n\n"
     for idx, fav in enumerate(favorites[:10], 1):
         text += f"{idx}. {fav['result_text'][:100]}...\n"
-    await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
+    await message.answer(text, reply_markup=get_main_keyboard())
 
 # ---- Обработчики кнопок главного меню ----
 @dp.message(F.text == "📸 Анализировать")
@@ -336,12 +331,11 @@ async def main_profile(message: Message):
     user_id = str(message.from_user.id)
     user = database.get_user(user_id)
     await message.answer(
-        f"👤 <b>Твой профиль</b>\n\n"
+        f"👤 Твой профиль\n\n"
         f"• Пол: {user.get('gender', 'не указан')}\n"
         f"• Стиль: {user.get('style_preference', 'не указан')}\n"
         f"• 📊 Бесплатных анализов осталось: {max(0, 3 - user.get('total_free_requests', 0))}\n"
         f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}",
-        parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
 
@@ -376,8 +370,6 @@ async def handle_premium_button(message: Message):
         send_phone_number_to_provider=True,
         provider_data=json.dumps(provider_data)
     )
-    # После отправки счёта клавиатуру можно не менять, но она временно скроется из-за inline-кнопки
-    # Мы не возвращаем reply_markup, потому что счёт – это отдельное окно
 
 @dp.message(F.text == "💰 Разовый анализ")
 async def handle_single_payment(message: Message):
@@ -414,12 +406,12 @@ async def handle_single_payment(message: Message):
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
     await message.answer(
-        "💡 <b>Как пользоваться ботом</b>\n\n"
+        "💡 Как пользоваться ботом\n\n"
         "1️⃣ Отправь фото в полный рост\n"
         "2️⃣ Получи разбор образа с оценкой и советами\n"
         "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
         "4️⃣ Добавляй вещи в виртуальный гардероб\n\n"
-        "<b>Команды:</b>\n"
+        "Команды:\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
         "/premium — информация о подписке\n"
@@ -428,7 +420,6 @@ async def main_help(message: Message):
         "/outfit — составить образ из моих вещей\n"
         "/favorites — показать сохранённые образы\n"
         "/help — эта справка",
-        parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
 
@@ -475,13 +466,12 @@ async def handle_photo(message: Message):
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id):
             await message.reply(
-                "❌ <b>Лимит бесплатных запросов исчерпан</b>\n\n"
+                "❌ Лимит бесплатных запросов исчерпан\n\n"
                 "У вас осталось 0 из 3 бесплатных анализов.\n"
                 "Чтобы продолжить пользоваться ботом, выберите один из вариантов:\n\n"
-                "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n"
-                "💰 <b>Разовый анализ</b> — 50₽ за фото\n\n"
+                "💎 Премиум-подписка — 299₽/мес, безлимит\n"
+                "💰 Разовый анализ — 50₽ за фото\n\n"
                 "Нажмите соответствующую кнопку в главном меню, чтобы оплатить.",
-                parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
             return
@@ -517,8 +507,7 @@ async def handle_photo(message: Message):
 
         await message.reply(
             result_with_links,
-            reply_markup=get_result_keyboard(),
-            parse_mode="HTML"
+            reply_markup=get_result_keyboard()
         )
 
         if user_id != DEVELOPER_ID and not database.is_premium(user_id):
@@ -638,10 +627,9 @@ async def process_payment(message: Message):
     if payload == "premium_30d":
         database.set_premium(user_id, duration_days=30)
         await message.answer(
-            "✅ **Подписка активирована!**\n"
+            "✅ Подписка активирована!\n"
             "Теперь вы можете анализировать образы без ограничений в течение месяца.\n"
             "Спасибо за покупку! 🌟",
-            parse_mode="Markdown",
             reply_markup=get_main_keyboard()
         )
     elif payload == "single_analysis":
@@ -650,10 +638,9 @@ async def process_payment(message: Message):
         if used > 0:
             database.update_user(user_id, {"total_free_requests": used - 1})
         await message.answer(
-            "✅ **Оплачено!**\n"
+            "✅ Оплачено!\n"
             "Теперь у вас есть один дополнительный бесплатный анализ.\n"
             "Отправьте фото — я проанализирую его без ограничений! 📸",
-            parse_mode="Markdown",
             reply_markup=get_main_keyboard()
         )
     else:
