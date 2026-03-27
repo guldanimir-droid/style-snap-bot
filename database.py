@@ -117,3 +117,5 @@ def get_favorites(user_id: str):
 
 def delete_favorite(favorite_id: int):
     supabase.table("favorites").delete().eq("id", favorite_id).execute()
+def delete_wardrobe_item(item_id: int):
+    supabase.table("wardrobe").delete().eq("id", item_id).execute()
