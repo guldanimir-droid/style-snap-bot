@@ -9,9 +9,7 @@ logger = logging.getLogger(__name__)
 
 class GigaChatClientWrapper:
     def __init__(self, client_id: str, client_secret: str):
-        # client_id не используется, но оставим для совместимости
         self.client_id = client_id
-        # client_secret — это Authorization key
         self.auth_key = client_secret
         self.access_token = None
         self.token_expiry = 0
@@ -52,17 +50,15 @@ class GigaChatClientWrapper:
         token = await self._get_token()
 
         img_base64 = base64.b64encode(image_bytes).decode('utf-8')
-        content = [
-            {"type": "text", "text": system_prompt},
-            {"type": "image_url", "image_url": {"url": img_base64}}
-        ]
-
+        
+        # Формат с полем "image" внутри сообщения (как в примерах GigaChat для изображений)
         payload = {
             "model": "GigaChat",
             "messages": [
                 {
                     "role": "user",
-                    "content": content
+                    "content": system_prompt,
+                    "image": img_base64
                 }
             ],
             "temperature": 0.7,
@@ -75,6 +71,7 @@ class GigaChatClientWrapper:
             "Accept": "application/json"
         }
 
+        logger.info(f"Sending payload to GigaChat: {json.dumps(payload, ensure_ascii=False)[:500]}")
         async with aiohttp.ClientSession() as session:
             async with session.post(self.api_url, json=payload, headers=headers, ssl=False) as resp:
                 if resp.status != 200:
