@@ -60,7 +60,7 @@ def get_style_keyboard():
 def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
-        [KeyboardButton(text="ℹ️ Помощь")]  # убрали "Сменить город"
+        [KeyboardButton(text="ℹ️ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -82,7 +82,6 @@ def get_color_keyboard():
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
 
 def get_result_keyboard():
-    """Inline-клавиатура для результатов анализа"""
     buttons = [
         [InlineKeyboardButton(text="🔄 Ещё совет", callback_data="more_advice")],
         [InlineKeyboardButton(text="📤 Поделиться", callback_data="share_result")],
@@ -117,7 +116,6 @@ async def cmd_start(message: Message, state: FSMContext):
                 reply_markup=get_gender_keyboard()
             )
         else:
-            # Город больше не спрашиваем
             await message.answer(
                 "Привет! Я стилист на базе ИИ. Отправь мне своё фото в полный рост, "
                 "и я оценю твой образ, дам советы и рекомендации с учётом трендов 2026.",
@@ -138,8 +136,6 @@ async def cmd_profile(message: Message):
         f"• Сегодня использовано запросов: {user.get('requests_today', 0)}/3",
         parse_mode="Markdown"
     )
-
-# Команда /setcity удалена
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
@@ -254,7 +250,7 @@ async def cmd_outfit(message: Message):
     await message.answer("✨ Составляю образы из твоих вещей... Это займёт несколько секунд.")
 
     try:
-        # Заглушка, потом заменим на реальный вызов
+        # Здесь будет реальный вызов GigaChat (пока заглушка)
         await message.answer("Функция в разработке. Скоро здесь будут готовые образы!")
     except Exception as e:
         logger.exception(f"Error generating outfit: {e}")
@@ -379,7 +375,6 @@ async def handle_photo(message: Message):
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
 
-        # Формируем персонализированный промпт (без погоды)
         personal_prompt = SYSTEM_PROMPT
         if gender:
             personal_prompt += f"\nПользователь: {gender}."
@@ -389,18 +384,13 @@ async def handle_photo(message: Message):
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         result_with_links = generate_affiliate_links(result)
 
-        # Сохраняем результат
         last_results[user_id] = result_with_links
 
-        # Отладочный лог
         logger.info("Sending message with inline keyboard")
-
-        # Отправляем основной ответ с inline-клавиатурой
         await message.reply(
             result_with_links,
             reply_markup=get_result_keyboard()
         )
-
         logger.info("Message sent")
 
         database.increment_requests(user_id)
