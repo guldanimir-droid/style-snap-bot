@@ -7,6 +7,7 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKey
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from config import (
     TELEGRAM_BOT_TOKEN,
@@ -187,12 +188,6 @@ async def main_profile(message: Message):
 
 @dp.message(F.text == "💎 Премиум")
 async def handle_premium_button(message: Message):
-    if not YOOKASSA_PROVIDER_TOKEN:
-        await message.answer(
-            "⚠️ Оплата временно недоступна. Скоро заработает!",
-            reply_markup=get_main_keyboard()
-        )
-        return
     price_rub = 299
     price_kopecks = price_rub * 100
     provider_data = {
@@ -225,12 +220,6 @@ async def handle_premium_button(message: Message):
 
 @dp.message(F.text == "💰 Разовый анализ")
 async def handle_single_payment(message: Message):
-    if not YOOKASSA_PROVIDER_TOKEN:
-        await message.answer(
-            "⚠️ Оплата временно недоступна. Скоро заработает!",
-            reply_markup=get_main_keyboard()
-        )
-        return
     price_rub = 50
     price_kopecks = price_rub * 100
     provider_data = {
@@ -355,7 +344,7 @@ async def handle_photo(message: Message):
             personal_prompt += f"\nПредпочитаемый стиль: {style}."
 
         result = await gemini.analyze_style(image_bytes, personal_prompt)
-        result_with_links = generate_affiliate_links(result)  # теперь ничего не добавляет
+        result_with_links = generate_affiliate_links(result)
 
         last_results[user_id] = result_with_links
 
