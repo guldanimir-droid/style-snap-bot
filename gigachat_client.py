@@ -3,15 +3,13 @@ import base64
 import json
 import logging
 import asyncio
-import uuid
 
 logger = logging.getLogger(__name__)
 
 class GigaChatClientWrapper:
     def __init__(self, client_id: str, client_secret: str):
-        # client_id и client_secret: это client_id и ключ авторизации (закодированный)
-        # Но client_secret у нас уже готов для Basic Auth, поэтому будем использовать напрямую
-        self.auth_key = client_secret  # это и есть готовый Authorization key
+        self.client_id = client_id
+        self.client_secret = client_secret
         self.access_token = None
         self.token_expiry = 0
         self.token_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
@@ -25,47 +23,38 @@ class GigaChatClientWrapper:
             "scope": "GIGACHAT_API_PERS",
             "grant_type": "client_credentials"
         }
-        # Генерируем случайный UUID для RqUID
-        rquid = str(uuid.uuid4())
-
-        headers = {
-            "Authorization": f"Basic {self.auth_key}",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-            "RqUID": rquid
-        }
+        auth = aiohttp.BasicAuth(self.client_id, self.client_secret)
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(self.token_url, data=payload, headers=headers, ssl=False) as resp:
+            async with session.post(self.token_url, data=payload, auth=auth, ssl=False) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"Token request failed: status={resp.status}, body={error_text}")
                     raise Exception(f"GigaChat token error {resp.status}: {error_text}")
                 data = await resp.json()
                 self.access_token = data["access_token"]
-                # expires_in может быть в секундах, возможно в ответе есть поле expires_at
-                expires_in = data.get("expires_in", 3600)  # если нет, ставим час
+                expires_in = data.get("expires_in", 1800)
                 self.token_expiry = asyncio.get_event_loop().time() + expires_in - 60
                 return self.access_token
 
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
         token = await self._get_token()
 
+        # Кодируем изображение в base64 (без префикса data:image...)
         img_base64 = base64.b64encode(image_bytes).decode('utf-8')
-        data_url = f"data:image/jpeg;base64,{img_base64}"
+
+        # Формируем сообщение как массив частей
+        content = [
+            {"type": "text", "text": system_prompt},
+            {"type": "image_url", "image_url": {"url": img_base64}}  # без префикса
+        ]
 
         payload = {
-            "model": "GigaChat",
+            "model": "GigaChat",  # базовая модель
             "messages": [
                 {
                     "role": "user",
-                    "content": system_prompt,
-                    "attachments": [
-                        {
-                            "type": "image_url",
-                            "url": data_url
-                        }
-                    ]
+                    "content": content
                 }
             ],
             "temperature": 0.7,
@@ -77,6 +66,9 @@ class GigaChatClientWrapper:
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
+
+        # Логируем payload для отладки (уровень INFO, чтобы было видно)
+        logger.info(f"Sending payload: {json.dumps(payload, ensure_ascii=False)[:500]}")
 
         async with aiohttp.ClientSession() as session:
             async with session.post(self.api_url, json=payload, headers=headers, ssl=False) as resp:
