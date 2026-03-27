@@ -24,7 +24,6 @@ from gigachat_client import GigaChatClientWrapper
 from prompts import SYSTEM_PROMPT
 from affiliate import generate_affiliate_links
 import database
-import image_utils
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -67,10 +66,16 @@ def get_main_keyboard():
 def get_result_keyboard():
     buttons = [
         [InlineKeyboardButton(text="🔄 Ещё совет", callback_data="more_advice")],
-        [InlineKeyboardButton(text="📤 Поделиться", callback_data="share_result")],
         [InlineKeyboardButton(text="⭐ В избранное", callback_data="save_favorite")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# ---- FSM для добавления вещи (упрощённо, можно убрать) ----
+class AddItemStates(StatesGroup):
+    waiting_for_name = State()
+    waiting_for_category = State()
+    waiting_for_color = State()
+    waiting_for_photo = State()
 
 # ---- Обработчики команд ----
 @dp.message(Command("start"))
@@ -194,7 +199,7 @@ async def handle_premium_button(message: Message):
         "receipt": {
             "items": [
                 {
-                    "description": "Премиум-подписка на 1 месяц (безлимитный доступ)",
+                    "description": "Премиум-подписка на 1 месяц",
                     "quantity": "1.00",
                     "amount": {
                         "value": f"{price_rub:.2f}",
@@ -226,7 +231,7 @@ async def handle_single_payment(message: Message):
         "receipt": {
             "items": [
                 {
-                    "description": "Разовый анализ образа (снимает лимит)",
+                    "description": "Разовый анализ образа",
                     "quantity": "1.00",
                     "amount": {
                         "value": f"{price_rub:.2f}",
@@ -344,12 +349,11 @@ async def handle_photo(message: Message):
             personal_prompt += f"\nПредпочитаемый стиль: {style}."
 
         result = await gemini.analyze_style(image_bytes, personal_prompt)
-        result_with_links = generate_affiliate_links(result)
 
-        last_results[user_id] = result_with_links
+        last_results[user_id] = result
 
         await message.reply(
-            result_with_links,
+            result,
             reply_markup=get_result_keyboard()
         )
 
@@ -368,25 +372,6 @@ async def handle_photo(message: Message):
 async def more_advice_callback(callback: CallbackQuery):
     await callback.answer("Советую отправить новое фото для анализа!", show_alert=False)
     await callback.message.answer("📸 Отправь мне другое фото, и я снова проанализирую твой образ.")
-    await callback.message.delete()
-
-@dp.callback_query(lambda c: c.data == "share_result")
-async def share_result_callback(callback: CallbackQuery):
-    user_id = str(callback.from_user.id)
-    result = last_results.get(user_id)
-    if not result:
-        await callback.answer("Не найден результат анализа. Отправьте новое фото.", show_alert=True)
-        return
-    try:
-        img_bytes = image_utils.create_result_image(result)
-        await callback.message.answer_photo(
-            photo=img_bytes,
-            caption="✨ Твой результат в виде картинки для публикации! ✨"
-        )
-        await callback.answer("Картинка готова!", show_alert=False)
-    except Exception as e:
-        logger.exception("Ошибка генерации картинки")
-        await callback.answer("Не удалось создать картинку. Попробуйте позже.", show_alert=True)
     await callback.message.delete()
 
 @dp.callback_query(lambda c: c.data == "save_favorite")
