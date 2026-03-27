@@ -9,8 +9,20 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from config import TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, LOG_LEVEL, SUPABASE_URL, SUPABASE_KEY, OPENWEATHER_API_KEY, DEVELOPER_ID
-from gemini_client import GeminiClientWrapper
+# Импортируем все переменные из config
+from config import (
+    TELEGRAM_BOT_TOKEN,
+    LOG_LEVEL,
+    SUPABASE_URL,
+    SUPABASE_KEY,
+    OPENWEATHER_API_KEY,
+    DEVELOPER_ID,
+    GIGACHAT_CLIENT_ID,
+    GIGACHAT_SECRET
+)
+
+# Используем клиент GigaChat вместо Gemini
+from gigachat_client import GigaChatClientWrapper
 from prompts import SYSTEM_PROMPT
 from weather_api import get_weather
 from affiliate import generate_affiliate_links
@@ -24,7 +36,11 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-gemini = GeminiClientWrapper(api_key=GEMINI_API_KEY)
+# Инициализация GigaChat клиента
+gemini = GigaChatClientWrapper(
+    client_id=GIGACHAT_CLIENT_ID,
+    client_secret=GIGACHAT_SECRET
+)
 
 # ---- Словарь для хранения последнего результата анализа (временный) ----
 last_results = {}  # key: user_id, value: result_text
@@ -469,6 +485,7 @@ async def handle_photo(message: Message):
         if weather_context:
             personal_prompt += f"\n\n{weather_context}"
 
+        # Вызов GigaChat
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         result_with_links = generate_affiliate_links(result)
 
