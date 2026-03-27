@@ -65,7 +65,7 @@ def generate_affiliate_links(advice_text: str) -> str:
             ym_link = generate_yandex_market_search_url(search_query)
             lamoda_link = generate_lamoda_search_url(search_query)
             ozon_link = generate_ozon_search_url(search_query)
-            advice_text += f"\n\n<b>Где купить {search_query}:</b>\n"
+            advice_text += f"\n\nГде купить {search_query}:\n"
             advice_text += f"• Wildberries: {wb_link}\n"
             advice_text += f"• Яндекс Маркет: {ym_link}\n"
             advice_text += f"• Lamoda: {lamoda_link}\n"
@@ -74,7 +74,7 @@ def generate_affiliate_links(advice_text: str) -> str:
 
     if "Где купить" not in advice_text:
         advice_text += (
-            "\n\n<b>Посмотрите также на популярных маркетплейсах:</b>\n"
+            "\n\nПосмотрите также на популярных маркетплейсах:\n"
             f"• Wildberries: https://www.wildberries.ru\n"
             f"• Яндекс Маркет: https://market.yandex.ru\n"
             f"• Lamoda: https://www.lamoda.ru\n"
