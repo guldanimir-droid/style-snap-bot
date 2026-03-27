@@ -3,13 +3,15 @@ import base64
 import json
 import logging
 import asyncio
+import uuid
 
 logger = logging.getLogger(__name__)
 
 class GigaChatClientWrapper:
     def __init__(self, client_id: str, client_secret: str):
-        self.client_id = client_id
-        self.client_secret = client_secret
+        # client_id и client_secret: это client_id и ключ авторизации (закодированный)
+        # Но client_secret у нас уже готов для Basic Auth, поэтому будем использовать напрямую
+        self.auth_key = client_secret  # это и есть готовый Authorization key
         self.access_token = None
         self.token_expiry = 0
         self.token_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
@@ -23,25 +25,27 @@ class GigaChatClientWrapper:
             "scope": "GIGACHAT_API_PERS",
             "grant_type": "client_credentials"
         }
-        auth = aiohttp.BasicAuth(self.client_id, self.client_secret)
+        # Генерируем случайный UUID для RqUID
+        rquid = str(uuid.uuid4())
+
+        headers = {
+            "Authorization": f"Basic {self.auth_key}",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "RqUID": rquid
+        }
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(self.token_url, data=payload, auth=auth, ssl=False) as resp:
+            async with session.post(self.token_url, data=payload, headers=headers, ssl=False) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"Token request failed: status={resp.status}, body={error_text}")
                     raise Exception(f"GigaChat token error {resp.status}: {error_text}")
                 data = await resp.json()
-                logger.info(f"Token response: {data}")  # для отладки
                 self.access_token = data["access_token"]
-                # У GigaChat время жизни токена может быть в поле expires_at (unix timestamp) или expires_in (секунды)
-                if "expires_in" in data:
-                    self.token_expiry = asyncio.get_event_loop().time() + data["expires_in"] - 60
-                elif "expires_at" in data:
-                    self.token_expiry = data["expires_at"] - 60
-                else:
-                    # Если нет ни того, ни другого, установим на 30 минут
-                    self.token_expiry = asyncio.get_event_loop().time() + 1800 - 60
+                # expires_in может быть в секундах, возможно в ответе есть поле expires_at
+                expires_in = data.get("expires_in", 3600)  # если нет, ставим час
+                self.token_expiry = asyncio.get_event_loop().time() + expires_in - 60
                 return self.access_token
 
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
