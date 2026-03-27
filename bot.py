@@ -278,7 +278,7 @@ async def cmd_outfit(message: Message):
     await message.answer("✨ Составляю образы из твоих вещей... Это займёт несколько секунд.")
 
     try:
-        # Временная заглушка
+        # Заглушка
         await message.answer("Функция в разработке. Скоро здесь будут готовые образы!")
     except Exception as e:
         logger.exception(f"Error generating outfit: {e}")
@@ -322,7 +322,6 @@ async def main_profile(message: Message):
 async def handle_premium_button(message: Message):
     price_rub = 299
     price_kopecks = price_rub * 100
-
     provider_data = {
         "receipt": {
             "items": [
@@ -338,7 +337,6 @@ async def handle_premium_button(message: Message):
             ]
         }
     }
-
     await bot.send_invoice(
         chat_id=message.chat.id,
         title="Премиум-подписка",
@@ -356,7 +354,6 @@ async def handle_premium_button(message: Message):
 async def handle_single_payment(message: Message):
     price_rub = 50
     price_kopecks = price_rub * 100
-
     provider_data = {
         "receipt": {
             "items": [
@@ -372,7 +369,6 @@ async def handle_single_payment(message: Message):
             ]
         }
     }
-
     await bot.send_invoice(
         chat_id=message.chat.id,
         title="Разовый анализ",
@@ -609,15 +605,13 @@ async def pre_checkout(query: PreCheckoutQuery):
 async def process_payment(message: Message):
     user_id = str(message.from_user.id)
     payload = message.successful_payment.invoice_payload
-    total_amount = message.successful_payment.total_amount
 
     if payload == "premium_30d":
         database.set_premium(user_id, duration_days=30)
         await message.answer(
-            f"✅ **Подписка активирована!**\n"
-            f"Сумма: {total_amount // 100} руб.\n"
-            f"Теперь вы можете анализировать образы без ограничений в течение месяца.\n"
-            f"Спасибо за покупку! 🌟",
+            "✅ **Подписка активирована!**\n"
+            "Теперь вы можете анализировать образы без ограничений в течение месяца.\n"
+            "Спасибо за покупку! 🌟",
             parse_mode="Markdown"
         )
     elif payload == "single_analysis":
@@ -626,10 +620,9 @@ async def process_payment(message: Message):
         if used > 0:
             database.update_user(user_id, {"total_free_requests": used - 1})
         await message.answer(
-            f"✅ **Оплачено!**\n"
-            f"Сумма: {total_amount // 100} руб.\n"
-            f"Теперь у вас есть один дополнительный бесплатный анализ.\n"
-            f"Отправьте фото — я проанализирую его без ограничений! 📸",
+            "✅ **Оплачено!**\n"
+            "Теперь у вас есть один дополнительный бесплатный анализ.\n"
+            "Отправьте фото — я проанализирую его без ограничений! 📸",
             parse_mode="Markdown"
         )
     else:
