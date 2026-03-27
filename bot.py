@@ -1,9 +1,8 @@
 import asyncio
 import logging
 import aiohttp
-import re
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
@@ -39,7 +38,11 @@ gemini = GigaChatClientWrapper(
 
 last_results = {}
 
-# ---- Клавиатуры (улучшенные) ----
+# Цены в звёздах
+SUBSCRIPTION_PRICE = 299   # подписка 299₽
+SINGLE_ANALYSIS_PRICE = 50 # разовый анализ 50₽
+
+# ---- Клавиатуры ----
 def get_gender_keyboard():
     kb = [
         [KeyboardButton(text="👩 Девушка"), KeyboardButton(text="👨 Парень")],
@@ -58,7 +61,8 @@ def get_style_keyboard():
 def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
-        [KeyboardButton(text="💎 Премиум"), KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="💎 Премиум"), KeyboardButton(text="💰 Разовый анализ")],
+        [KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -105,8 +109,6 @@ async def cmd_start(message: Message, state: FSMContext):
         del last_results[user_id]
     try:
         user = database.get_user(user_id)
-        logger.info(f"User data: {user}")
-
         if not user.get("gender") or not user.get("style_preference"):
             await message.answer(
                 "🌟 <b>Привет! Я твой персональный AI-стилист!</b>\n\n"
@@ -133,17 +135,12 @@ async def cmd_start(message: Message, state: FSMContext):
 async def cmd_profile(message: Message):
     user_id = str(message.from_user.id)
     user = database.get_user(user_id)
-    is_premium = database.is_premium(user_id)
-    premium_text = "✅ Активна" if is_premium else "❌ Не активна"
-    free_used = user.get("total_free_requests", 0)
-    free_left = max(0, 3 - free_used)
     await message.answer(
         f"👤 <b>Твой профиль</b>\n\n"
         f"• Пол: {user.get('gender', 'не указан')}\n"
         f"• Стиль: {user.get('style_preference', 'не указан')}\n"
-        f"• Бесплатных анализов осталось: {free_left} из 3\n"
-        f"• Премиум: {premium_text}\n\n"
-        f"💡 <i>Используй /premium для информации о подписке.</i>",
+        f"• 📊 Бесплатных анализов осталось: {max(0, 3 - user.get('total_free_requests', 0))}\n"
+        f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}",
         parse_mode="HTML"
     )
 
@@ -151,21 +148,15 @@ async def cmd_profile(message: Message):
 async def cmd_premium(message: Message):
     user_id = str(message.from_user.id)
     if database.is_premium(user_id):
-        await message.answer(
-            "✅ <b>У вас активна премиум-подписка!</b>\n\n"
-            "Все запросы безлимитны. Спасибо, что поддерживаете проект! 🙌",
-            parse_mode="HTML"
-        )
+        await message.answer("✅ У вас активна премиум-подписка! Все запросы безлимитны.")
     else:
-        free_used = database.get_user(user_id).get("total_free_requests", 0)
-        remaining = max(0, 3 - free_used)
+        used = database.get_user(user_id).get("total_free_requests", 0)
+        remaining = max(0, 3 - used)
         await message.answer(
-            f"🔓 <b>Информация о подписке</b>\n\n"
-            f"У вас осталось <b>{remaining}</b> бесплатных анализов из 3.\n\n"
-            "💎 <b>Премиум-подписка</b> — 250₽/мес, безлимит\n"
+            f"🔓 У вас осталось <b>{remaining}</b> бесплатных анализов из 3.\n\n"
+            "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n"
             "💰 <b>Разовый анализ</b> — 50₽ за фото\n\n"
-            "Для оформления напишите @ваш_контакт (временно).\n"
-            "После оплаты мы активируем безлимит или добавим разовый запрос.",
+            "Нажмите соответствующую кнопку в главном меню, чтобы оплатить.",
             parse_mode="HTML"
         )
 
@@ -189,11 +180,12 @@ async def cmd_help(message: Message):
         parse_mode="HTML"
     )
 
+# ---- Обработчики добавления вещей (FSM) ----
 @dp.message(Command("additem"))
 async def cmd_additem(message: Message, state: FSMContext):
     await state.set_state(AddItemStates.waiting_for_name)
     await message.answer(
-        "Добавляем вещь в гардероб. Напиши название (например, 'свитер', 'джинсы'):",
+        "➕ Добавляем вещь в гардероб. Напиши название (например, 'свитер', 'джинсы'):",
         reply_markup=ReplyKeyboardRemove()
     )
 
@@ -211,7 +203,9 @@ async def add_item_category(message: Message, state: FSMContext):
     if message.text not in ["🧥 Верх", "👖 Низ", "👟 Обувь", "💍 Аксессуар", "📦 Другое"]:
         await message.answer("Пожалуйста, выбери категорию из кнопок.")
         return
-    await state.update_data(category=message.text)
+    # Приводим к простому тексту
+    cat = message.text.split()[1] if len(message.text.split()) > 1 else message.text
+    await state.update_data(category=cat)
     await state.set_state(AddItemStates.waiting_for_color)
     await message.answer("Выбери цвет:", reply_markup=get_color_keyboard())
 
@@ -224,7 +218,7 @@ async def add_item_color(message: Message, state: FSMContext):
     if color == "🎨 Другой":
         await state.update_data(color="не указан")
     else:
-        await state.update_data(color=color)
+        await state.update_data(color=color.split()[1])
     await state.set_state(AddItemStates.waiting_for_photo)
     await message.answer("Теперь отправь фото этой вещи (можно пропустить, нажав /skip).", reply_markup=ReplyKeyboardRemove())
 
@@ -253,7 +247,7 @@ async def add_item_photo(message: Message, state: FSMContext):
         item_name=data.get("item_name"),
         category=data.get("category"),
         color=data.get("color"),
-        image_url=""
+        image_url=""  # пока не сохраняем фото
     )
     await state.clear()
     await message.answer(f"✅ Вещь «{data.get('item_name')}» добавлена в гардероб с фото!", reply_markup=get_main_keyboard())
@@ -263,19 +257,19 @@ async def cmd_wardrobe(message: Message):
     user_id = str(message.from_user.id)
     items = database.get_user_wardrobe(user_id)
     if not items:
-        await message.answer("Твой гардероб пока пуст. Добавь вещи через /additem.")
+        await message.answer("👕 Твой гардероб пока пуст. Добавь вещи через /additem.")
         return
-    text = "👕 *Твой гардероб:*\n"
+    text = "👕 <b>Твой гардероб:</b>\n\n"
     for idx, item in enumerate(items, 1):
         text += f"{idx}. {item.get('item_name')} ({item.get('category', 'нет категории')}, {item.get('color', 'нет цвета')})\n"
-    await message.answer(text, parse_mode="Markdown")
+    await message.answer(text, parse_mode="HTML")
 
 @dp.message(Command("outfit"))
 async def cmd_outfit(message: Message):
     user_id = str(message.from_user.id)
     items = database.get_user_wardrobe(user_id)
     if not items:
-        await message.answer("У тебя пока нет вещей в гардеробе. Добавь через /additem.")
+        await message.answer("👕 У тебя пока нет вещей в гардеробе. Добавь через /additem.")
         return
 
     items_text = "\n".join([f"- {item['item_name']} ({item.get('category', '?')}, {item.get('color', '?')})" for item in items])
@@ -287,29 +281,29 @@ async def cmd_outfit(message: Message):
     await message.answer("✨ Составляю образы из твоих вещей... Это займёт несколько секунд.")
 
     try:
-        # Пока заглушка, позже можно реализовать вызов GigaChat
+        # Временная заглушка
         await message.answer("Функция в разработке. Скоро здесь будут готовые образы!")
     except Exception as e:
         logger.exception(f"Error generating outfit: {e}")
-        await message.answer("Не удалось составить образ. Попробуй позже.")
+        await message.answer("❌ Не удалось составить образ. Попробуй позже.")
 
 @dp.message(Command("favorites"))
 async def cmd_favorites(message: Message):
     user_id = str(message.from_user.id)
     favorites = database.get_favorites(user_id)
     if not favorites:
-        await message.answer("У тебя пока нет сохранённых образов.")
+        await message.answer("⭐ У тебя пока нет сохранённых образов.")
         return
-    text = "⭐ *Сохранённые образы:*\n\n"
+    text = "⭐ <b>Сохранённые образы:</b>\n\n"
     for idx, fav in enumerate(favorites[:10], 1):
         text += f"{idx}. {fav['result_text'][:100]}...\n"
-    await message.answer(text, parse_mode="Markdown")
+    await message.answer(text, parse_mode="HTML")
 
 # ---- Обработчики кнопок главного меню ----
 @dp.message(F.text == "📸 Анализировать")
 async def main_analyze(message: Message):
     await message.answer(
-        "Отправь мне фото в полный рост, и я оценю твой образ!",
+        "📸 Отправь мне фото в полный рост, и я оценю твой образ!",
         reply_markup=ReplyKeyboardRemove()
     )
 
@@ -317,35 +311,68 @@ async def main_analyze(message: Message):
 async def main_profile(message: Message):
     user_id = str(message.from_user.id)
     user = database.get_user(user_id)
-    is_premium = database.is_premium(user_id)
-    premium_text = "✅ Активна" if is_premium else "❌ Не активна"
-    free_used = user.get("total_free_requests", 0)
-    free_left = max(0, 3 - free_used)
     await message.answer(
         f"👤 <b>Твой профиль</b>\n\n"
         f"• Пол: {user.get('gender', 'не указан')}\n"
         f"• Стиль: {user.get('style_preference', 'не указан')}\n"
-        f"• Бесплатных анализов осталось: {free_left} из 3\n"
-        f"• Премиум: {premium_text}\n\n"
-        f"💡 <i>Используй /premium для информации о подписке.</i>",
+        f"• 📊 Бесплатных анализов осталось: {max(0, 3 - user.get('total_free_requests', 0))}\n"
+        f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
 
 @dp.message(F.text == "💎 Премиум")
-async def main_premium(message: Message):
-    # перенаправляем на команду /premium
-    await cmd_premium(message)
+async def handle_premium_button(message: Message):
+    await bot.send_invoice(
+        chat_id=message.chat.id,
+        title="Премиум-подписка",
+        description="Безлимитный доступ к анализу стиля на 1 месяц",
+        payload="premium_30d",
+        provider_token="",
+        currency="XTR",
+        prices=[LabeledPrice(label="1 месяц", amount=SUBSCRIPTION_PRICE)],
+        start_parameter="premium_subscription"
+    )
+
+@dp.message(F.text == "💰 Разовый анализ")
+async def handle_single_payment(message: Message):
+    await bot.send_invoice(
+        chat_id=message.chat.id,
+        title="Разовый анализ",
+        description="Один дополнительный анализ образа (снимает лимит на 1 раз)",
+        payload="single_analysis",
+        provider_token="",
+        currency="XTR",
+        prices=[LabeledPrice(label="1 анализ", amount=SINGLE_ANALYSIS_PRICE)],
+        start_parameter="single_analysis"
+    )
 
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
-    await cmd_help(message)
+    await message.answer(
+        "💡 <b>Как пользоваться ботом</b>\n\n"
+        "1️⃣ Отправь фото в полный рост\n"
+        "2️⃣ Получи разбор образа с оценкой и советами\n"
+        "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
+        "4️⃣ Добавляй вещи в виртуальный гардероб\n\n"
+        "<b>Команды:</b>\n"
+        "/start — начать заново\n"
+        "/profile — мой профиль\n"
+        "/premium — информация о подписке\n"
+        "/additem — добавить вещь в гардероб\n"
+        "/wardrobe — показать мои вещи\n"
+        "/outfit — составить образ из моих вещей\n"
+        "/favorites — показать сохранённые образы\n"
+        "/help — эта справка",
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard()
+    )
 
 # ---- Обработчики выбора пола и стиля ----
 @dp.message(F.text.in_(["👩 Девушка", "👨 Парень"]))
 async def set_gender(message: Message):
     user_id = str(message.from_user.id)
-    gender = "Девушка" if "Девушка" in message.text else "Парень"
+    gender = message.text.split()[1]  # "Девушка" или "Парень"
     database.set_user_info(user_id, gender=gender)
     await message.answer(
         "Отлично! А какой стиль тебе ближе?",
@@ -355,7 +382,7 @@ async def set_gender(message: Message):
 @dp.message(F.text.in_(["👕 Повседневный", "💼 Деловой", "🌸 Романтичный", "⚽ Спортивный"]))
 async def set_style(message: Message):
     user_id = str(message.from_user.id)
-    style = message.text.replace("👕 ", "").replace("💼 ", "").replace("🌸 ", "").replace("⚽ ", "")
+    style = message.text.split()[1]  # второе слово
     database.set_user_info(user_id, style=style)
     await message.answer(
         "Спасибо! Теперь отправь мне фото, и я проанализирую образ.",
@@ -365,7 +392,6 @@ async def set_style(message: Message):
 @dp.message(F.text == "⏩ Пропустить")
 async def skip_info(message: Message):
     user_id = str(message.from_user.id)
-    user = database.get_user(user_id)
     await message.answer(
         "Хорошо, если захочешь заполнить позже — просто напиши /start. А пока отправь фото!",
         reply_markup=get_main_keyboard()
@@ -377,24 +403,23 @@ async def handle_photo(message: Message):
     user_id = str(message.from_user.id)
     logger.info(f"Photo handler called for user {user_id}")
 
-    # Проверка размера фото (не более 5 МБ)
     photo = message.photo[-1]
     if photo.file_size > 5 * 1024 * 1024:
         await message.reply("⚠️ Фото слишком большое (более 5 МБ). Пожалуйста, отправьте изображение поменьше.")
         return
 
-    # Проверка лимитов (разработчик всегда может)
+    # Проверка лимита
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id):
             await message.reply(
                 "❌ <b>Лимит бесплатных запросов исчерпан</b>\n\n"
                 "У вас осталось 0 из 3 бесплатных анализов.\n"
                 "Чтобы продолжить пользоваться ботом, выберите один из вариантов:\n\n"
-                "💎 <b>Премиум-подписка</b> — 250₽/мес, безлимит\n"
+                "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n"
                 "💰 <b>Разовый анализ</b> — 50₽ за фото\n\n"
-                "Для оформления напишите @ваш_контакт (временно).\n"
-                "После оплаты мы активируем безлимит или добавим разовый запрос.",
-                parse_mode="HTML"
+                "Нажмите соответствующую кнопку в главном меню, чтобы оплатить.",
+                parse_mode="HTML",
+                reply_markup=get_main_keyboard()
             )
             return
 
@@ -433,7 +458,7 @@ async def handle_photo(message: Message):
             parse_mode="HTML"
         )
 
-        # Увеличиваем счётчик использованных бесплатных запросов (если не премиум)
+        # Увеличиваем счётчик бесплатных запросов, если пользователь не премиум
         if user_id != DEVELOPER_ID and not database.is_premium(user_id):
             database.increment_free_requests(user_id)
 
@@ -444,7 +469,7 @@ async def handle_photo(message: Message):
             reply_markup=get_main_keyboard()
         )
 
-# ---- Обработчики inline-кнопок (без изменений) ----
+# ---- Обработчики inline-кнопок ----
 @dp.callback_query(lambda c: c.data == "more_advice")
 async def more_advice_callback(callback: CallbackQuery):
     await callback.answer("Советую отправить новое фото для анализа!", show_alert=False)
@@ -537,6 +562,40 @@ async def save_favorite_callback(callback: CallbackQuery):
     database.add_favorite(user_id, result)
     await callback.answer("Результат сохранён в избранное!", show_alert=False)
     await callback.message.delete()
+
+# ---- Обработчики платежей ----
+@dp.pre_checkout_query()
+async def pre_checkout(query: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(query.id, ok=True)
+
+@dp.message(F.successful_payment)
+async def process_payment(message: Message):
+    user_id = str(message.from_user.id)
+    payload = message.successful_payment.invoice_payload
+    total_amount = message.successful_payment.total_amount
+
+    if payload == "premium_30d":
+        database.set_premium(user_id, duration_days=30)
+        await message.answer(
+            "✅ **Подписка активирована!**\n"
+            "Теперь вы можете анализировать образы без ограничений в течение месяца.\n"
+            "Спасибо за покупку! 🌟",
+            parse_mode="Markdown"
+        )
+    elif payload == "single_analysis":
+        # Увеличиваем лимит: уменьшаем счётчик использованных бесплатных запросов на 1
+        user = database.get_user(user_id)
+        used = user.get("total_free_requests", 0)
+        if used > 0:
+            database.update_user(user_id, {"total_free_requests": used - 1})
+        await message.answer(
+            "✅ **Оплачено!**\n"
+            "Теперь у вас есть один дополнительный бесплатный анализ.\n"
+            "Отправьте фото — я проанализирую его без ограничений! 📸",
+            parse_mode="Markdown"
+        )
+    else:
+        await message.answer("Неизвестный тип оплаты. Обратитесь к разработчику.")
 
 # ---- Запуск ----
 async def main():
