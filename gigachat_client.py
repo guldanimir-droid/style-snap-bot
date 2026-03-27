@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import asyncio
+import ssl
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,10 @@ class GigaChatClientWrapper:
         self.token_expiry = 0
         self.token_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
         self.api_url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+        # Создаём SSL-контекст, который не проверяет сертификат
+        self.ssl_context = ssl.create_default_context()
+        self.ssl_context.check_hostname = False
+        self.ssl_context.verify_mode = ssl.CERT_NONE
 
     async def _get_token(self):
         """Получить OAuth2 токен (client credentials)."""
@@ -25,13 +30,16 @@ class GigaChatClientWrapper:
         }
         auth = aiohttp.BasicAuth(self.client_id, self.client_secret)
 
-        async with aiohttp.ClientSession() as session:
+        # Используем connector с отключённой проверкой SSL
+        connector = aiohttp.TCPConnector(ssl=self.ssl_context)
+        async with aiohttp.ClientSession(connector=connector) as session:
             async with session.post(self.token_url, data=payload, auth=auth) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     raise Exception(f"GigaChat token error {resp.status}: {error_text}")
                 data = await resp.json()
                 self.access_token = data["access_token"]
+                # expires_in — секунды до истечения, установим запас 60 сек
                 self.token_expiry = asyncio.get_event_loop().time() + data["expires_in"] - 60
                 return self.access_token
 
@@ -39,7 +47,6 @@ class GigaChatClientWrapper:
         """Анализирует фото с помощью GigaChat."""
         token = await self._get_token()
 
-        # Кодируем фото в base64
         img_base64 = base64.b64encode(image_bytes).decode('utf-8')
         data_url = f"data:image/jpeg;base64,{img_base64}"
 
@@ -67,7 +74,8 @@ class GigaChatClientWrapper:
             "Accept": "application/json"
         }
 
-        async with aiohttp.ClientSession() as session:
+        connector = aiohttp.TCPConnector(ssl=self.ssl_context)
+        async with aiohttp.ClientSession(connector=connector) as session:
             async with session.post(self.api_url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
