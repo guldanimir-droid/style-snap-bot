@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import asyncio
+import uuid  # для генерации UUID
 
 logger = logging.getLogger(__name__)
 
@@ -19,38 +20,46 @@ class GigaChatClientWrapper:
         if self.access_token and asyncio.get_event_loop().time() < self.token_expiry:
             return self.access_token
 
+        # Генерируем уникальный RqUID
+        rq_uid = str(uuid.uuid4())
+
         payload = {
             "scope": "GIGACHAT_API_PERS",
             "grant_type": "client_credentials"
         }
         auth = aiohttp.BasicAuth(self.client_id, self.client_secret)
 
+        # Заголовки: обязательно RqUID и Accept
+        headers = {
+            "RqUID": rq_uid,
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+
         async with aiohttp.ClientSession() as session:
-            async with session.post(self.token_url, data=payload, auth=auth, ssl=False) as resp:
+            async with session.post(self.token_url, data=payload, auth=auth, headers=headers, ssl=False) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"Token request failed: status={resp.status}, body={error_text}")
                     raise Exception(f"GigaChat token error {resp.status}: {error_text}")
                 data = await resp.json()
                 self.access_token = data["access_token"]
-                expires_in = data.get("expires_in", 1800)
+                expires_in = data.get("expires_in", 1800)  # по умолчанию 30 мин
                 self.token_expiry = asyncio.get_event_loop().time() + expires_in - 60
                 return self.access_token
 
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
         token = await self._get_token()
 
-        # Кодируем изображение в base64 (без префикса data:image...)
         img_base64 = base64.b64encode(image_bytes).decode('utf-8')
-
-        # Формируем сообщение как массив частей
+        # По документации GigaChat, изображение передаётся как base64 без префикса
         content = [
             {"type": "text", "text": system_prompt},
-            {"type": "image_url", "image_url": {"url": img_base64}}  # без префикса
+            {"type": "image_url", "image_url": {"url": img_base64}}
         ]
 
         payload = {
-            "model": "GigaChat",  # базовая модель
+            "model": "GigaChat",
             "messages": [
                 {
                     "role": "user",
@@ -66,9 +75,6 @@ class GigaChatClientWrapper:
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
-
-        # Логируем payload для отладки (уровень INFO, чтобы было видно)
-        logger.info(f"Sending payload: {json.dumps(payload, ensure_ascii=False)[:500]}")
 
         async with aiohttp.ClientSession() as session:
             async with session.post(self.api_url, json=payload, headers=headers, ssl=False) as resp:
