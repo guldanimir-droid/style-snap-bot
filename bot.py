@@ -139,14 +139,18 @@ async def cmd_profile(message: Message):
         f"• Стиль: {user.get('style_preference', 'не указан')}\n"
         f"• 📊 Бесплатных анализов осталось: {max(0, 3 - user.get('total_free_requests', 0))}\n"
         f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard()
     )
 
 @dp.message(Command("premium"))
 async def cmd_premium(message: Message):
     user_id = str(message.from_user.id)
     if database.is_premium(user_id):
-        await message.answer("✅ У вас активна премиум-подписка! Все запросы безлимитны.")
+        await message.answer(
+            "✅ У вас активна премиум-подписка! Все запросы безлимитны.",
+            reply_markup=get_main_keyboard()
+        )
     else:
         used = database.get_user(user_id).get("total_free_requests", 0)
         remaining = max(0, 3 - used)
@@ -155,7 +159,8 @@ async def cmd_premium(message: Message):
             "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n"
             "💰 <b>Разовый анализ</b> — 50₽ за фото\n\n"
             "Нажмите соответствующую кнопку в главном меню, чтобы оплатить.",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
         )
 
 @dp.message(Command("help"))
@@ -175,7 +180,8 @@ async def cmd_help(message: Message):
         "/outfit — составить образ из моих вещей\n"
         "/favorites — показать сохранённые образы\n"
         "/help — эта справка",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard()
     )
 
 # ---- Обработчики добавления вещей (FSM) ----
@@ -230,7 +236,10 @@ async def skip_photo(message: Message, state: FSMContext):
         color=data.get("color")
     )
     await state.clear()
-    await message.answer(f"✅ Вещь «{data.get('item_name')}» добавлена в гардероб! Чтобы добавить ещё, используй /additem.")
+    await message.answer(
+        f"✅ Вещь «{data.get('item_name')}» добавлена в гардероб! Чтобы добавить ещё, используй /additem.",
+        reply_markup=get_main_keyboard()
+    )
 
 @dp.message(AddItemStates.waiting_for_photo)
 async def add_item_photo(message: Message, state: FSMContext):
@@ -247,26 +256,35 @@ async def add_item_photo(message: Message, state: FSMContext):
         image_url=""
     )
     await state.clear()
-    await message.answer(f"✅ Вещь «{data.get('item_name')}» добавлена в гардероб с фото!", reply_markup=get_main_keyboard())
+    await message.answer(
+        f"✅ Вещь «{data.get('item_name')}» добавлена в гардероб с фото!",
+        reply_markup=get_main_keyboard()
+    )
 
 @dp.message(Command("wardrobe"))
 async def cmd_wardrobe(message: Message):
     user_id = str(message.from_user.id)
     items = database.get_user_wardrobe(user_id)
     if not items:
-        await message.answer("👕 Твой гардероб пока пуст. Добавь вещи через /additem.")
+        await message.answer(
+            "👕 Твой гардероб пока пуст. Добавь вещи через /additem.",
+            reply_markup=get_main_keyboard()
+        )
         return
     text = "👕 <b>Твой гардероб:</b>\n\n"
     for idx, item in enumerate(items, 1):
         text += f"{idx}. {item.get('item_name')} ({item.get('category', 'нет категории')}, {item.get('color', 'нет цвета')})\n"
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
 @dp.message(Command("outfit"))
 async def cmd_outfit(message: Message):
     user_id = str(message.from_user.id)
     items = database.get_user_wardrobe(user_id)
     if not items:
-        await message.answer("👕 У тебя пока нет вещей в гардеробе. Добавь через /additem.")
+        await message.answer(
+            "👕 У тебя пока нет вещей в гардеробе. Добавь через /additem.",
+            reply_markup=get_main_keyboard()
+        )
         return
 
     items_text = "\n".join([f"- {item['item_name']} ({item.get('category', '?')}, {item.get('color', '?')})" for item in items])
@@ -275,26 +293,35 @@ async def cmd_outfit(message: Message):
 
 Составь 2-3 варианта образов из этих вещей (можно использовать некоторые вещи не обязательно все). Для каждого варианта дай краткое описание и совет, куда можно пойти в таком образе."""
 
-    await message.answer("✨ Составляю образы из твоих вещей... Это займёт несколько секунд.")
+    await message.answer("✨ Составляю образы из твоих вещей... Это займёт несколько секунд.", reply_markup=ReplyKeyboardRemove())
 
     try:
-        # Заглушка
-        await message.answer("Функция в разработке. Скоро здесь будут готовые образы!")
+        # Здесь будет реальный вызов GigaChat (пока заглушка)
+        await message.answer(
+            "Функция в разработке. Скоро здесь будут готовые образы!",
+            reply_markup=get_main_keyboard()
+        )
     except Exception as e:
         logger.exception(f"Error generating outfit: {e}")
-        await message.answer("❌ Не удалось составить образ. Попробуй позже.")
+        await message.answer(
+            "❌ Не удалось составить образ. Попробуй позже.",
+            reply_markup=get_main_keyboard()
+        )
 
 @dp.message(Command("favorites"))
 async def cmd_favorites(message: Message):
     user_id = str(message.from_user.id)
     favorites = database.get_favorites(user_id)
     if not favorites:
-        await message.answer("⭐ У тебя пока нет сохранённых образов.")
+        await message.answer(
+            "⭐ У тебя пока нет сохранённых образов.",
+            reply_markup=get_main_keyboard()
+        )
         return
     text = "⭐ <b>Сохранённые образы:</b>\n\n"
     for idx, fav in enumerate(favorites[:10], 1):
         text += f"{idx}. {fav['result_text'][:100]}...\n"
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
 # ---- Обработчики кнопок главного меню ----
 @dp.message(F.text == "📸 Анализировать")
@@ -349,6 +376,8 @@ async def handle_premium_button(message: Message):
         send_phone_number_to_provider=True,
         provider_data=json.dumps(provider_data)
     )
+    # После отправки счёта клавиатуру можно не менять, но она временно скроется из-за inline-кнопки
+    # Мы не возвращаем reply_markup, потому что счёт – это отдельное окно
 
 @dp.message(F.text == "💰 Разовый анализ")
 async def handle_single_payment(message: Message):
@@ -461,7 +490,7 @@ async def handle_photo(message: Message):
     file_path = file.file_path
     file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
 
-    await message.reply("🔍 Анализирую ваш образ... Это займёт несколько секунд.")
+    await message.reply("🔍 Анализирую ваш образ... Это займёт несколько секунд.", reply_markup=ReplyKeyboardRemove())
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -612,7 +641,8 @@ async def process_payment(message: Message):
             "✅ **Подписка активирована!**\n"
             "Теперь вы можете анализировать образы без ограничений в течение месяца.\n"
             "Спасибо за покупку! 🌟",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
         )
     elif payload == "single_analysis":
         user = database.get_user(user_id)
@@ -623,10 +653,14 @@ async def process_payment(message: Message):
             "✅ **Оплачено!**\n"
             "Теперь у вас есть один дополнительный бесплатный анализ.\n"
             "Отправьте фото — я проанализирую его без ограничений! 📸",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
         )
     else:
-        await message.answer("Неизвестный тип оплаты. Обратитесь к разработчику.")
+        await message.answer(
+            "Неизвестный тип оплаты. Обратитесь к разработчику.",
+            reply_markup=get_main_keyboard()
+        )
 
 # ---- Запуск ----
 async def main():
