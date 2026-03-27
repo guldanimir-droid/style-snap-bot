@@ -3,7 +3,10 @@ from PIL import Image, ImageDraw, ImageFont
 import textwrap
 
 def create_result_image(text: str, width: int = 800, max_height: int = 2000) -> bytes:
-    """Создаёт изображение с текстом для публикации."""
+    """
+    Создаёт изображение с текстом для публикации.
+    Возвращает байты PNG.
+    """
     bg_color = (245, 245, 245)
     text_color = (0, 0, 0)
     font_size = 18
