@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import aiohttp
+import json
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command
@@ -15,7 +16,8 @@ from config import (
     SUPABASE_KEY,
     DEVELOPER_ID,
     GIGACHAT_CLIENT_ID,
-    GIGACHAT_SECRET
+    GIGACHAT_SECRET,
+    YOOKASSA_PROVIDER_TOKEN
 )
 
 from gigachat_client import GigaChatClientWrapper
@@ -37,10 +39,6 @@ gemini = GigaChatClientWrapper(
 )
 
 last_results = {}
-
-# Цены в звёздах
-SUBSCRIPTION_PRICE = 299   # подписка 299₽
-SINGLE_ANALYSIS_PRICE = 50 # разовый анализ 50₽
 
 # ---- Клавиатуры ----
 def get_gender_keyboard():
@@ -203,7 +201,6 @@ async def add_item_category(message: Message, state: FSMContext):
     if message.text not in ["🧥 Верх", "👖 Низ", "👟 Обувь", "💍 Аксессуар", "📦 Другое"]:
         await message.answer("Пожалуйста, выбери категорию из кнопок.")
         return
-    # Приводим к простому тексту
     cat = message.text.split()[1] if len(message.text.split()) > 1 else message.text
     await state.update_data(category=cat)
     await state.set_state(AddItemStates.waiting_for_color)
@@ -247,7 +244,7 @@ async def add_item_photo(message: Message, state: FSMContext):
         item_name=data.get("item_name"),
         category=data.get("category"),
         color=data.get("color"),
-        image_url=""  # пока не сохраняем фото
+        image_url=""
     )
     await state.clear()
     await message.answer(f"✅ Вещь «{data.get('item_name')}» добавлена в гардероб с фото!", reply_markup=get_main_keyboard())
@@ -323,28 +320,70 @@ async def main_profile(message: Message):
 
 @dp.message(F.text == "💎 Премиум")
 async def handle_premium_button(message: Message):
+    price_rub = 299
+    price_kopecks = price_rub * 100
+
+    provider_data = {
+        "receipt": {
+            "items": [
+                {
+                    "description": "Премиум-подписка на 1 месяц (безлимитный доступ)",
+                    "quantity": "1.00",
+                    "amount": {
+                        "value": f"{price_rub:.2f}",
+                        "currency": "RUB"
+                    },
+                    "vat_code": 1
+                }
+            ]
+        }
+    }
+
     await bot.send_invoice(
         chat_id=message.chat.id,
         title="Премиум-подписка",
         description="Безлимитный доступ к анализу стиля на 1 месяц",
         payload="premium_30d",
-        provider_token="",
-        currency="XTR",
-        prices=[LabeledPrice(label="1 месяц", amount=SUBSCRIPTION_PRICE)],
-        start_parameter="premium_subscription"
+        provider_token=YOOKASSA_PROVIDER_TOKEN,
+        currency="RUB",
+        prices=[LabeledPrice(label="1 месяц", amount=price_kopecks)],
+        need_phone_number=True,
+        send_phone_number_to_provider=True,
+        provider_data=json.dumps(provider_data)
     )
 
 @dp.message(F.text == "💰 Разовый анализ")
 async def handle_single_payment(message: Message):
+    price_rub = 50
+    price_kopecks = price_rub * 100
+
+    provider_data = {
+        "receipt": {
+            "items": [
+                {
+                    "description": "Разовый анализ образа (снимает лимит)",
+                    "quantity": "1.00",
+                    "amount": {
+                        "value": f"{price_rub:.2f}",
+                        "currency": "RUB"
+                    },
+                    "vat_code": 1
+                }
+            ]
+        }
+    }
+
     await bot.send_invoice(
         chat_id=message.chat.id,
         title="Разовый анализ",
-        description="Один дополнительный анализ образа (снимает лимит на 1 раз)",
+        description="Один дополнительный анализ образа",
         payload="single_analysis",
-        provider_token="",
-        currency="XTR",
-        prices=[LabeledPrice(label="1 анализ", amount=SINGLE_ANALYSIS_PRICE)],
-        start_parameter="single_analysis"
+        provider_token=YOOKASSA_PROVIDER_TOKEN,
+        currency="RUB",
+        prices=[LabeledPrice(label="1 анализ", amount=price_kopecks)],
+        need_phone_number=True,
+        send_phone_number_to_provider=True,
+        provider_data=json.dumps(provider_data)
     )
 
 @dp.message(F.text == "❓ Помощь")
@@ -372,7 +411,7 @@ async def main_help(message: Message):
 @dp.message(F.text.in_(["👩 Девушка", "👨 Парень"]))
 async def set_gender(message: Message):
     user_id = str(message.from_user.id)
-    gender = message.text.split()[1]  # "Девушка" или "Парень"
+    gender = message.text.split()[1]
     database.set_user_info(user_id, gender=gender)
     await message.answer(
         "Отлично! А какой стиль тебе ближе?",
@@ -382,7 +421,7 @@ async def set_gender(message: Message):
 @dp.message(F.text.in_(["👕 Повседневный", "💼 Деловой", "🌸 Романтичный", "⚽ Спортивный"]))
 async def set_style(message: Message):
     user_id = str(message.from_user.id)
-    style = message.text.split()[1]  # второе слово
+    style = message.text.split()[1]
     database.set_user_info(user_id, style=style)
     await message.answer(
         "Спасибо! Теперь отправь мне фото, и я проанализирую образ.",
@@ -408,7 +447,6 @@ async def handle_photo(message: Message):
         await message.reply("⚠️ Фото слишком большое (более 5 МБ). Пожалуйста, отправьте изображение поменьше.")
         return
 
-    # Проверка лимита
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id):
             await message.reply(
@@ -458,7 +496,6 @@ async def handle_photo(message: Message):
             parse_mode="HTML"
         )
 
-        # Увеличиваем счётчик бесплатных запросов, если пользователь не премиум
         if user_id != DEVELOPER_ID and not database.is_premium(user_id):
             database.increment_free_requests(user_id)
 
@@ -577,21 +614,22 @@ async def process_payment(message: Message):
     if payload == "premium_30d":
         database.set_premium(user_id, duration_days=30)
         await message.answer(
-            "✅ **Подписка активирована!**\n"
-            "Теперь вы можете анализировать образы без ограничений в течение месяца.\n"
-            "Спасибо за покупку! 🌟",
+            f"✅ **Подписка активирована!**\n"
+            f"Сумма: {total_amount // 100} руб.\n"
+            f"Теперь вы можете анализировать образы без ограничений в течение месяца.\n"
+            f"Спасибо за покупку! 🌟",
             parse_mode="Markdown"
         )
     elif payload == "single_analysis":
-        # Увеличиваем лимит: уменьшаем счётчик использованных бесплатных запросов на 1
         user = database.get_user(user_id)
         used = user.get("total_free_requests", 0)
         if used > 0:
             database.update_user(user_id, {"total_free_requests": used - 1})
         await message.answer(
-            "✅ **Оплачено!**\n"
-            "Теперь у вас есть один дополнительный бесплатный анализ.\n"
-            "Отправьте фото — я проанализирую его без ограничений! 📸",
+            f"✅ **Оплачено!**\n"
+            f"Сумма: {total_amount // 100} руб.\n"
+            f"Теперь у вас есть один дополнительный бесплатный анализ.\n"
+            f"Отправьте фото — я проанализирую его без ограничений! 📸",
             parse_mode="Markdown"
         )
     else:
