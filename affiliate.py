@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 WILDBERRIES_PARTNER_ID = "3623509"      # из Wibes
 YANDEX_MARKET_CLID = None                # заменишь позже, когда получишь
 LAMODA_ADMITAD_ID = None                 # заменишь позже, когда получишь
-OZON_PARTNER_ID = "0247333695"
+OZON_PARTNER_ID = None                   # заменишь позже, когда получишь
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 
