@@ -3,7 +3,7 @@ import logging
 import aiohttp
 import json
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
@@ -16,7 +16,8 @@ from config import (
     SUPABASE_KEY,
     DEVELOPER_ID,
     GIGACHAT_CLIENT_ID,
-    GIGACHAT_SECRET
+    GIGACHAT_SECRET,
+    YOOKASSA_PROVIDER_TOKEN
 )
 
 from gigachat_client import GigaChatClientWrapper
@@ -154,7 +155,7 @@ async def cmd_premium(message: Message):
             f"🔓 У вас осталось {remaining} бесплатных анализов из 3.\n\n"
             "💎 Премиум-подписка — 299₽/мес, безлимит\n"
             "💰 Разовый анализ — 50₽ за фото\n\n"
-            "Скоро появится возможность оплаты через ЮKassa.",
+            "Нажмите соответствующую кнопку в главном меню, чтобы оплатить.",
             reply_markup=get_main_keyboard()
         )
 
@@ -171,6 +172,7 @@ async def cmd_help(message: Message):
         "/profile — мой профиль\n"
         "/premium — информация о подписке\n"
         "/additem — добавить вещь в гардероб\n"
+        "/removeitem — удалить вещь из гардероба (укажите номер из списка)\n"
         "/wardrobe — показать мои вещи\n"
         "/outfit — составить образ из моих вещей\n"
         "/favorites — показать сохранённые образы\n"
@@ -265,10 +267,37 @@ async def cmd_wardrobe(message: Message):
             reply_markup=get_main_keyboard()
         )
         return
-    text = "👕 Твой гардероб:\n\n"
+    text = "👕 *Твой гардероб:*\n\n"
     for idx, item in enumerate(items, 1):
         text += f"{idx}. {item.get('item_name')} ({item.get('category', 'нет категории')}, {item.get('color', 'нет цвета')})\n"
-    await message.answer(text, reply_markup=get_main_keyboard())
+    await message.answer(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
+
+@dp.message(Command("removeitem"))
+async def cmd_removeitem(message: Message):
+    user_id = str(message.from_user.id)
+    items = database.get_user_wardrobe(user_id)
+    if not items:
+        await message.answer("👕 Твой гардероб пуст. Нечего удалять.", reply_markup=get_main_keyboard())
+        return
+
+    parts = message.text.split()
+    if len(parts) > 1:
+        try:
+            idx = int(parts[1]) - 1
+            if idx < 0 or idx >= len(items):
+                await message.answer(f"❌ Неверный номер. Доступно {len(items)} вещей. Введите номер от 1 до {len(items)}.", reply_markup=get_main_keyboard())
+                return
+            item_id = items[idx]['id']
+            database.delete_wardrobe_item(item_id)
+            await message.answer(f"✅ Вещь «{items[idx]['item_name']}» удалена из гардероба.", reply_markup=get_main_keyboard())
+        except ValueError:
+            await message.answer("❌ Номер должен быть числом. Пример: /removeitem 2", reply_markup=get_main_keyboard())
+    else:
+        text = "👕 *Твой гардероб:*\n\n"
+        for idx, item in enumerate(items, 1):
+            text += f"{idx}. {item.get('item_name')} ({item.get('category', 'нет категории')}, {item.get('color', 'нет цвета')})\n"
+        text += "\n✏️ *Как удалить:*\nВведи команду и номер: `/removeitem 3`"
+        await message.answer(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 @dp.message(Command("outfit"))
 async def cmd_outfit(message: Message):
@@ -340,19 +369,66 @@ async def main_profile(message: Message):
 
 @dp.message(F.text == "💎 Премиум")
 async def handle_premium_button(message: Message):
-    # Временно информационное сообщение, пока не подключена ЮKassa
-    await message.answer(
-        "💎 Премиум-подписка — 299₽/мес, безлимитный доступ.\n"
-        "Скоро появится возможность оплаты через ЮKassa.",
-        reply_markup=get_main_keyboard()
+    price_rub = 299
+    price_kopecks = price_rub * 100
+    provider_data = {
+        "receipt": {
+            "items": [
+                {
+                    "description": "Премиум-подписка на 1 месяц (безлимитный доступ)",
+                    "quantity": "1.00",
+                    "amount": {
+                        "value": f"{price_rub:.2f}",
+                        "currency": "RUB"
+                    },
+                    "vat_code": 1
+                }
+            ]
+        }
+    }
+    await bot.send_invoice(
+        chat_id=message.chat.id,
+        title="Премиум-подписка",
+        description="Безлимитный доступ к анализу стиля на 1 месяц",
+        payload="premium_30d",
+        provider_token=YOOKASSA_PROVIDER_TOKEN,
+        currency="RUB",
+        prices=[LabeledPrice(label="1 месяц", amount=price_kopecks)],
+        need_phone_number=True,
+        send_phone_number_to_provider=True,
+        provider_data=json.dumps(provider_data)
     )
 
 @dp.message(F.text == "💰 Разовый анализ")
 async def handle_single_payment(message: Message):
-    await message.answer(
-        "💰 Разовый анализ — 50₽ за фото.\n"
-        "Скоро появится возможность оплаты через ЮKassa.",
-        reply_markup=get_main_keyboard()
+    price_rub = 50
+    price_kopecks = price_rub * 100
+    provider_data = {
+        "receipt": {
+            "items": [
+                {
+                    "description": "Разовый анализ образа (снимает лимит)",
+                    "quantity": "1.00",
+                    "amount": {
+                        "value": f"{price_rub:.2f}",
+                        "currency": "RUB"
+                    },
+                    "vat_code": 1
+                }
+            ]
+        }
+    }
+    await bot.send_invoice(
+        chat_id=message.chat.id,
+        title="Разовый анализ",
+        description="Один дополнительный анализ образа",
+        payload="single_analysis",
+        provider_token=YOOKASSA_PROVIDER_TOKEN,
+        currency="RUB",
+        prices=[LabeledPrice(label="1 анализ", amount=price_kopecks)],
+        need_phone_number=True,
+        send_phone_number_to_provider=True,
+        provider_data=json.dumps(provider_data)
     )
 
 @dp.message(F.text == "❓ Помощь")
@@ -368,6 +444,7 @@ async def main_help(message: Message):
         "/profile — мой профиль\n"
         "/premium — информация о подписке\n"
         "/additem — добавить вещь в гардероб\n"
+        "/removeitem — удалить вещь из гардероба\n"
         "/wardrobe — показать мои вещи\n"
         "/outfit — составить образ из моих вещей\n"
         "/favorites — показать сохранённые образы\n"
@@ -423,7 +500,7 @@ async def handle_photo(message: Message):
                 "Чтобы продолжить пользоваться ботом, выберите один из вариантов:\n\n"
                 "💎 Премиум-подписка — 299₽/мес, безлимит\n"
                 "💰 Разовый анализ — 50₽ за фото\n\n"
-                "Скоро появится возможность оплаты.",
+                "Нажмите соответствующую кнопку в главном меню, чтобы оплатить.",
                 reply_markup=get_main_keyboard()
             )
             return
@@ -453,8 +530,7 @@ async def handle_photo(message: Message):
             personal_prompt += f"\nПредпочитаемый стиль: {style}."
 
         result = await gemini.analyze_style(image_bytes, personal_prompt)
-        # Партнёрские ссылки убраны
-        result_with_links = generate_affiliate_links(result)  # теперь просто возвращает result
+        result_with_links = generate_affiliate_links(result)  # функция теперь ничего не добавляет
 
         last_results[user_id] = result_with_links
 
@@ -566,6 +642,41 @@ async def save_favorite_callback(callback: CallbackQuery):
     database.add_favorite(user_id, result)
     await callback.answer("Результат сохранён в избранное!", show_alert=False)
     await callback.message.delete()
+
+# ---- Обработчики платежей ----
+@dp.pre_checkout_query()
+async def pre_checkout(query: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(query.id, ok=True)
+
+@dp.message(F.successful_payment)
+async def process_payment(message: Message):
+    user_id = str(message.from_user.id)
+    payload = message.successful_payment.invoice_payload
+
+    if payload == "premium_30d":
+        database.set_premium(user_id, duration_days=30)
+        await message.answer(
+            "✅ Подписка активирована!\n"
+            "Теперь вы можете анализировать образы без ограничений в течение месяца.\n"
+            "Спасибо за покупку! 🌟",
+            reply_markup=get_main_keyboard()
+        )
+    elif payload == "single_analysis":
+        user = database.get_user(user_id)
+        used = user.get("total_free_requests", 0)
+        if used > 0:
+            database.update_user(user_id, {"total_free_requests": used - 1})
+        await message.answer(
+            "✅ Оплачено!\n"
+            "Теперь у вас есть один дополнительный бесплатный анализ.\n"
+            "Отправьте фото — я проанализирую его без ограничений! 📸",
+            reply_markup=get_main_keyboard()
+        )
+    else:
+        await message.answer(
+            "Неизвестный тип оплаты. Обратитесь к разработчику.",
+            reply_markup=get_main_keyboard()
+        )
 
 # ---- Запуск ----
 async def main():
