@@ -63,7 +63,6 @@ def is_premium(user_id: str) -> bool:
         return False
     premium_until = user.get("premium_until")
     if premium_until:
-        # Если срок истёк, снимаем статус
         if datetime.fromisoformat(premium_until.replace('Z', '+00:00')) < datetime.now().astimezone():
             update_user(user_id, {"is_premium": False, "premium_until": None})
             return False
@@ -87,23 +86,6 @@ def set_user_info(user_id: str, gender: str = None, style: str = None, city: str
     if data:
         update_user(user_id, data)
 
-# ---- Гардероб ----
-def add_wardrobe_item(user_id: str, item_name: str, category: str = None, color: str = None, image_url: str = None):
-    supabase.table("wardrobe").insert({
-        "user_id": user_id,
-        "item_name": item_name,
-        "category": category,
-        "color": color,
-        "image_url": image_url
-    }).execute()
-
-def get_user_wardrobe(user_id: str):
-    response = supabase.table("wardrobe").select("*").eq("user_id", user_id).execute()
-    return response.data
-
-def delete_wardrobe_item(item_id: int):
-    supabase.table("wardrobe").delete().eq("id", item_id).execute()
-
 # ---- Избранное ----
 def add_favorite(user_id: str, result_text: str):
     supabase.table("favorites").insert({
@@ -117,5 +99,3 @@ def get_favorites(user_id: str):
 
 def delete_favorite(favorite_id: int):
     supabase.table("favorites").delete().eq("id", favorite_id).execute()
-def delete_wardrobe_item(item_id: int):
-    supabase.table("wardrobe").delete().eq("id", item_id).execute()
