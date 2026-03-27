@@ -21,12 +21,10 @@ class GigaChatClientWrapper:
             return self.access_token
 
         rq_uid = str(uuid.uuid4())
-
         payload = {
             "scope": "GIGACHAT_API_PERS",
             "grant_type": "client_credentials"
         }
-
         headers = {
             "Authorization": f"Basic {self.auth_key}",
             "RqUID": rq_uid,
@@ -48,10 +46,8 @@ class GigaChatClientWrapper:
 
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
         token = await self._get_token()
-
         img_base64 = base64.b64encode(image_bytes).decode('utf-8')
-        
-        # Формат с полем "image" внутри сообщения (как в примерах GigaChat для изображений)
+
         payload = {
             "model": "GigaChat",
             "messages": [
@@ -71,7 +67,6 @@ class GigaChatClientWrapper:
             "Accept": "application/json"
         }
 
-        logger.info(f"Sending payload to GigaChat: {json.dumps(payload, ensure_ascii=False)[:500]}")
         async with aiohttp.ClientSession() as session:
             async with session.post(self.api_url, json=payload, headers=headers, ssl=False) as resp:
                 if resp.status != 200:
