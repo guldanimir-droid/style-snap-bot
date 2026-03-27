@@ -500,13 +500,6 @@ async def handle_photo(message: Message):
             result_with_links,
             reply_markup=get_result_keyboard()
         )
-
-        # Дополнительно отправляем тестовое сообщение с клавиатурой (для проверки)
-        await message.answer(
-            "Тест клавиатуры (должна появиться)",
-            reply_markup=get_result_keyboard()
-        )
-
         logger.info("Message sent")
 
         database.increment_requests(user_id)
