@@ -40,9 +40,6 @@ gemini = GigaChatClientWrapper(
 
 last_results = {}
 
-# ---- Временное хранилище для ручного ввода города (если нужно) ----
-temp_states = {}
-
 # ---- Клавиатуры ----
 def get_gender_keyboard():
     kb = [
@@ -67,45 +64,19 @@ def get_main_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-def get_category_keyboard():
-    kb = [
-        [KeyboardButton(text="🧥 Верх"), KeyboardButton(text="👖 Низ")],
-        [KeyboardButton(text="👟 Обувь"), KeyboardButton(text="💍 Аксессуар")],
-        [KeyboardButton(text="📦 Другое")]
-    ]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
-
-def get_color_keyboard():
-    kb = [
-        [KeyboardButton(text="⚫ Черный"), KeyboardButton(text="⚪ Белый")],
-        [KeyboardButton(text="🌫 Серый"), KeyboardButton(text="🔵 Синий")],
-        [KeyboardButton(text="🔴 Красный"), KeyboardButton(text="🟢 Зеленый")],
-        [KeyboardButton(text="🎨 Другой")]
-    ]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
-
 def get_result_keyboard():
     buttons = [
         [InlineKeyboardButton(text="🔄 Ещё совет", callback_data="more_advice")],
         [InlineKeyboardButton(text="📤 Поделиться", callback_data="share_result")],
-        [InlineKeyboardButton(text="➕ В гардероб", callback_data="add_to_wardrobe")],
         [InlineKeyboardButton(text="⭐ В избранное", callback_data="save_favorite")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---- FSM для добавления вещи ----
-class AddItemStates(StatesGroup):
-    waiting_for_name = State()
-    waiting_for_category = State()
-    waiting_for_color = State()
-    waiting_for_photo = State()
-
 # ---- Обработчики команд ----
 @dp.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext):
+async def cmd_start(message: Message):
     user_id = str(message.from_user.id)
     logger.info(f"Start command from user {user_id}")
-    await state.clear()
     if user_id in last_results:
         del last_results[user_id]
     try:
@@ -171,143 +142,15 @@ async def cmd_help(message: Message):
         "💡 Как пользоваться ботом\n\n"
         "1️⃣ Отправь фото в полный рост\n"
         "2️⃣ Получи разбор образа с оценкой и советами\n"
-        "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
-        "4️⃣ Добавляй вещи в виртуальный гардероб\n\n"
+        "3️⃣ Сохраняй понравившиеся идеи в избранное\n\n"
         "Команды:\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
         "/premium — информация о подписке\n"
-        "/additem — добавить вещь в гардероб\n"
-        "/wardrobe — показать мои вещи\n"
-        "/outfit — составить образ из моих вещей\n"
         "/favorites — показать сохранённые образы\n"
         "/help — эта справка",
         reply_markup=get_main_keyboard()
     )
-
-# ---- Обработчики добавления вещей (FSM) ----
-@dp.message(Command("additem"))
-async def cmd_additem(message: Message, state: FSMContext):
-    await state.set_state(AddItemStates.waiting_for_name)
-    await message.answer(
-        "➕ Добавляем вещь в гардероб. Напиши название (например, 'свитер', 'джинсы'):",
-        reply_markup=ReplyKeyboardRemove()
-    )
-
-@dp.message(AddItemStates.waiting_for_name)
-async def add_item_name(message: Message, state: FSMContext):
-    if not message.text:
-        await message.answer("Пожалуйста, введи название текстом.")
-        return
-    await state.update_data(item_name=message.text)
-    await state.set_state(AddItemStates.waiting_for_category)
-    await message.answer("Выбери категорию:", reply_markup=get_category_keyboard())
-
-@dp.message(AddItemStates.waiting_for_category)
-async def add_item_category(message: Message, state: FSMContext):
-    if message.text not in ["🧥 Верх", "👖 Низ", "👟 Обувь", "💍 Аксессуар", "📦 Другое"]:
-        await message.answer("Пожалуйста, выбери категорию из кнопок.")
-        return
-    cat = message.text.split()[1] if len(message.text.split()) > 1 else message.text
-    await state.update_data(category=cat)
-    await state.set_state(AddItemStates.waiting_for_color)
-    await message.answer("Выбери цвет:", reply_markup=get_color_keyboard())
-
-@dp.message(AddItemStates.waiting_for_color)
-async def add_item_color(message: Message, state: FSMContext):
-    color = message.text
-    if color not in ["⚫ Черный", "⚪ Белый", "🌫 Серый", "🔵 Синий", "🔴 Красный", "🟢 Зеленый", "🎨 Другой"]:
-        await message.answer("Пожалуйста, выбери цвет из кнопок.")
-        return
-    if color == "🎨 Другой":
-        await state.update_data(color="не указан")
-    else:
-        await state.update_data(color=color.split()[1])
-    await state.set_state(AddItemStates.waiting_for_photo)
-    await message.answer("Теперь отправь фото этой вещи (можно пропустить, нажав /skip).", reply_markup=ReplyKeyboardRemove())
-
-@dp.message(Command("skip"))
-async def skip_photo(message: Message, state: FSMContext):
-    user_id = str(message.from_user.id)
-    data = await state.get_data()
-    database.add_wardrobe_item(
-        user_id=user_id,
-        item_name=data.get("item_name"),
-        category=data.get("category"),
-        color=data.get("color")
-    )
-    await state.clear()
-    await message.answer(
-        f"✅ Вещь «{data.get('item_name')}» добавлена в гардероб! Чтобы добавить ещё, используй /additem.",
-        reply_markup=get_main_keyboard()
-    )
-
-@dp.message(AddItemStates.waiting_for_photo)
-async def add_item_photo(message: Message, state: FSMContext):
-    if not message.photo:
-        await message.answer("Отправь фото вещи (или /skip, чтобы пропустить).")
-        return
-    user_id = str(message.from_user.id)
-    data = await state.get_data()
-    database.add_wardrobe_item(
-        user_id=user_id,
-        item_name=data.get("item_name"),
-        category=data.get("category"),
-        color=data.get("color"),
-        image_url=""
-    )
-    await state.clear()
-    await message.answer(
-        f"✅ Вещь «{data.get('item_name')}» добавлена в гардероб с фото!",
-        reply_markup=get_main_keyboard()
-    )
-
-@dp.message(Command("wardrobe"))
-async def cmd_wardrobe(message: Message):
-    user_id = str(message.from_user.id)
-    items = database.get_user_wardrobe(user_id)
-    if not items:
-        await message.answer(
-            "👕 Твой гардероб пока пуст. Добавь вещи через /additem.",
-            reply_markup=get_main_keyboard()
-        )
-        return
-    text = "👕 Твой гардероб:\n\n"
-    for idx, item in enumerate(items, 1):
-        text += f"{idx}. {item.get('item_name')} ({item.get('category', 'нет категории')}, {item.get('color', 'нет цвета')})\n"
-    await message.answer(text, reply_markup=get_main_keyboard())
-
-@dp.message(Command("outfit"))
-async def cmd_outfit(message: Message):
-    user_id = str(message.from_user.id)
-    items = database.get_user_wardrobe(user_id)
-    if not items:
-        await message.answer(
-            "👕 У тебя пока нет вещей в гардеробе. Добавь через /additem.",
-            reply_markup=get_main_keyboard()
-        )
-        return
-
-    items_text = "\n".join([f"- {item['item_name']} ({item.get('category', '?')}, {item.get('color', '?')})" for item in items])
-    prompt = f"""У меня есть следующие вещи в гардеробе:
-{items_text}
-
-Составь 2-3 варианта образов из этих вещей (можно использовать некоторые вещи не обязательно все). Для каждого варианта дай краткое описание и совет, куда можно пойти в таком образе."""
-
-    await message.answer("✨ Составляю образы из твоих вещей... Это займёт несколько секунд.", reply_markup=ReplyKeyboardRemove())
-
-    try:
-        # Здесь будет реальный вызов GigaChat (пока заглушка)
-        await message.answer(
-            "Функция в разработке. Скоро здесь будут готовые образы!",
-            reply_markup=get_main_keyboard()
-        )
-    except Exception as e:
-        logger.exception(f"Error generating outfit: {e}")
-        await message.answer(
-            "❌ Не удалось составить образ. Попробуй позже.",
-            reply_markup=get_main_keyboard()
-        )
 
 @dp.message(Command("favorites"))
 async def cmd_favorites(message: Message):
@@ -406,15 +249,11 @@ async def main_help(message: Message):
         "💡 Как пользоваться ботом\n\n"
         "1️⃣ Отправь фото в полный рост\n"
         "2️⃣ Получи разбор образа с оценкой и советами\n"
-        "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
-        "4️⃣ Добавляй вещи в виртуальный гардероб\n\n"
+        "3️⃣ Сохраняй понравившиеся идеи в избранное\n\n"
         "Команды:\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
         "/premium — информация о подписке\n"
-        "/additem — добавить вещь в гардероб\n"
-        "/wardrobe — показать мои вещи\n"
-        "/outfit — составить образ из моих вещей\n"
         "/favorites — показать сохранённые образы\n"
         "/help — эта справка",
         reply_markup=get_main_keyboard()
@@ -606,63 +445,6 @@ async def share_result_callback(callback: CallbackQuery):
         logger.exception("Ошибка генерации картинки")
         await callback.answer("Не удалось создать картинку. Попробуйте позже.", show_alert=True)
     await callback.message.delete()
-
-@dp.callback_query(lambda c: c.data == "add_to_wardrobe")
-async def add_to_wardrobe_callback(callback: CallbackQuery):
-    user_id = str(callback.from_user.id)
-    result = last_results.get(user_id)
-    if not result:
-        await callback.answer("Не найден результат анализа. Отправьте новое фото.", show_alert=True)
-        return
-    clothes_keywords = ["свитер", "футболка", "брюки", "джинсы", "куртка", "пальто", "шарф", "шапка", "ботинки", "кроссовки"]
-    colors = ["белый", "черный", "серый", "синий", "красный", "зеленый", "желтый", "коричневый", "бежевый"]
-    detected_items = []
-    lower_text = result.lower()
-    for word in clothes_keywords:
-        if word in lower_text:
-            color = None
-            for col in colors:
-                if col in lower_text:
-                    color = col
-                    break
-            detected_items.append({"name": word, "color": color})
-    if not detected_items:
-        await callback.message.answer(
-            "Не удалось определить вещь из текста. Пожалуйста, добавьте вещь вручную через команду `/additem`.",
-            reply_markup=get_main_keyboard()
-        )
-        await callback.answer()
-        await callback.message.delete()
-        return
-    buttons = []
-    row = []
-    for item in detected_items[:6]:
-        row.append(InlineKeyboardButton(text=f"{item['name']} ({item['color'] or '?'})", callback_data=f"add_item_{item['name']}_{item['color']}"))
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_add")])
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await callback.message.answer("Найдены возможные вещи. Выберите для добавления в гардероб:", reply_markup=keyboard)
-    await callback.answer()
-    await callback.message.delete()
-
-@dp.callback_query(lambda c: c.data.startswith("add_item_"))
-async def confirm_add_item(callback: CallbackQuery):
-    data = callback.data.split("_")
-    item_name = data[2]
-    color = data[3] if len(data) > 3 else None
-    user_id = str(callback.from_user.id)
-    database.add_wardrobe_item(user_id=user_id, item_name=item_name, category="Другое", color=color)
-    await callback.answer(f"Вещь «{item_name}» добавлена в гардероб!", show_alert=False)
-    await callback.message.edit_text(f"✅ Вещь «{item_name}» добавлена в гардероб!")
-
-@dp.callback_query(lambda c: c.data == "cancel_add")
-async def cancel_add_callback(callback: CallbackQuery):
-    await callback.message.delete()
-    await callback.answer("Добавление отменено.")
 
 @dp.callback_query(lambda c: c.data == "save_favorite")
 async def save_favorite_callback(callback: CallbackQuery):
