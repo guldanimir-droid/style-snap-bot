@@ -40,6 +40,9 @@ gemini = GigaChatClientWrapper(
 
 last_results = {}
 
+# ---- Временное хранилище для ручного ввода города (если нужно) ----
+temp_states = {}
+
 # ---- Клавиатуры ----
 def get_gender_keyboard():
     kb = [
@@ -131,14 +134,17 @@ async def cmd_start(message: Message, state: FSMContext):
 async def cmd_profile(message: Message):
     user_id = str(message.from_user.id)
     user = database.get_user(user_id)
-    await message.answer(
-        f"👤 Твой профиль\n\n"
+    text = (
+        f"👤 *Твой профиль*\n\n"
         f"• Пол: {user.get('gender', 'не указан')}\n"
         f"• Стиль: {user.get('style_preference', 'не указан')}\n"
         f"• 📊 Бесплатных анализов осталось: {max(0, 3 - user.get('total_free_requests', 0))}\n"
-        f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}",
-        reply_markup=get_main_keyboard()
+        f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}"
     )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_profile")]
+    ])
+    await message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
 
 @dp.message(Command("premium"))
 async def cmd_premium(message: Message):
@@ -328,16 +334,7 @@ async def main_analyze(message: Message):
 
 @dp.message(F.text == "👤 Мой профиль")
 async def main_profile(message: Message):
-    user_id = str(message.from_user.id)
-    user = database.get_user(user_id)
-    await message.answer(
-        f"👤 Твой профиль\n\n"
-        f"• Пол: {user.get('gender', 'не указан')}\n"
-        f"• Стиль: {user.get('style_preference', 'не указан')}\n"
-        f"• 📊 Бесплатных анализов осталось: {max(0, 3 - user.get('total_free_requests', 0))}\n"
-        f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}",
-        reply_markup=get_main_keyboard()
-    )
+    await cmd_profile(message)
 
 @dp.message(F.text == "💎 Премиум")
 async def handle_premium_button(message: Message):
@@ -366,7 +363,7 @@ async def handle_premium_button(message: Message):
         provider_token=YOOKASSA_PROVIDER_TOKEN,
         currency="RUB",
         prices=[LabeledPrice(label="1 месяц", amount=price_kopecks)],
-        need_email=True,                     # обязательно для чеков
+        need_email=True,
         send_email_to_provider=True,
         provider_data=json.dumps(provider_data)
     )
@@ -423,11 +420,11 @@ async def main_help(message: Message):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Обработчики выбора пола и стиля ----
+# ---- Обработчики выбора пола и стиля (при первом опросе) ----
 @dp.message(F.text.in_(["👩 Девушка", "👨 Парень"]))
 async def set_gender(message: Message):
     user_id = str(message.from_user.id)
-    gender = message.text.split()[1]
+    gender = message.text.split()[1]  # "Девушка" или "Парень"
     database.set_user_info(user_id, gender=gender)
     await message.answer(
         "Отлично! А какой стиль тебе ближе?",
@@ -520,7 +517,71 @@ async def handle_photo(message: Message):
             reply_markup=get_main_keyboard()
         )
 
-# ---- Обработчики inline-кнопок ----
+# ---- Обработчики inline-кнопок (редактирование профиля) ----
+@dp.callback_query(lambda c: c.data == "edit_profile")
+async def edit_profile_menu(callback: CallbackQuery):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👩/👨 Пол", callback_data="edit_gender")],
+        [InlineKeyboardButton(text="👕 Стиль", callback_data="edit_style")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_profile")]
+    ])
+    await callback.message.edit_text(
+        "🔧 *Что хотите изменить?*",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "back_to_profile")
+async def back_to_profile(callback: CallbackQuery):
+    await cmd_profile(callback.message)
+    await callback.message.delete()
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "edit_gender")
+async def edit_gender(callback: CallbackQuery):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👩 Девушка", callback_data="set_gender_Девушка")],
+        [InlineKeyboardButton(text="👨 Парень", callback_data="set_gender_Парень")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="edit_profile")]
+    ])
+    await callback.message.edit_text(
+        "Выберите пол:",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("set_gender_"))
+async def set_gender_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    gender = callback.data.split("_")[2]
+    database.set_user_info(user_id, gender=gender)
+    await callback.answer(f"Пол изменён на {gender}!")
+    await cmd_profile(callback.message)
+    await callback.message.delete()
+
+@dp.callback_query(lambda c: c.data == "edit_style")
+async def edit_style(callback: CallbackQuery):
+    styles = ["Повседневный", "Деловой", "Романтичный", "Спортивный"]
+    buttons = [[InlineKeyboardButton(text=style, callback_data=f"set_style_{style}")] for style in styles]
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="edit_profile")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await callback.message.edit_text(
+        "Выберите предпочитаемый стиль:",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("set_style_"))
+async def set_style_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    style = callback.data.split("_")[2]
+    database.set_user_info(user_id, style=style)
+    await callback.answer(f"Стиль изменён на {style}!")
+    await cmd_profile(callback.message)
+    await callback.message.delete()
+
+# ---- Обработчики inline-кнопок (для результата анализа) ----
 @dp.callback_query(lambda c: c.data == "more_advice")
 async def more_advice_callback(callback: CallbackQuery):
     await callback.answer("Советую отправить новое фото для анализа!", show_alert=False)
