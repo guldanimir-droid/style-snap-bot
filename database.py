@@ -25,7 +25,6 @@ def get_user(user_id: str):
             "last_request_date": str(date.today()),
             "gender": None,
             "style_preference": None,
-            "city": None,
             "total_free_requests": 0,
             "is_premium": False,
             "premium_until": None
@@ -36,7 +35,6 @@ def get_user(user_id: str):
             "last_request_date": str(date.today()),
             "gender": None,
             "style_preference": None,
-            "city": None,
             "total_free_requests": 0,
             "is_premium": False,
             "premium_until": None
@@ -75,14 +73,12 @@ def set_premium(user_id: str, duration_days: int = 30):
         "premium_until": premium_until.isoformat()
     })
 
-def set_user_info(user_id: str, gender: str = None, style: str = None, city: str = None):
+def set_user_info(user_id: str, gender: str = None, style: str = None):
     data = {}
-    if gender:
+    if gender is not None:
         data["gender"] = gender
-    if style:
+    if style is not None:
         data["style_preference"] = style
-    if city:
-        data["city"] = city
     if data:
         update_user(user_id, data)
 
