@@ -59,8 +59,8 @@ def get_style_keyboard():
 def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
-        [KeyboardButton(text="💎 Премиум"), KeyboardButton(text="💰 Разовый анализ")],
-        [KeyboardButton(text="💬 Спросить стилиста"), KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="💎 Премиум"), KeyboardButton(text="💬 Спросить стилиста")],
+        [KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -132,8 +132,7 @@ async def cmd_premium(message: Message):
         remaining = max(0, 3 - used)
         await message.answer(
             f"🔓 У вас осталось <b>{remaining}</b> бесплатных анализов из 3.\n\n"
-            "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n"
-            "💰 <b>Разовый анализ</b> — 50₽ за фото\n\n"
+            "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n\n"
             "Нажмите соответствующую кнопку в главном меню, чтобы оплатить.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
@@ -146,7 +145,7 @@ async def cmd_help(message: Message):
         "1️⃣ Отправь фото в полный рост – получи анализ образа\n"
         "2️⃣ Напиши вопрос стилисту – получи текстовую консультацию\n"
         "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
-        "4️⃣ Оплати подписку или разовый анализ, чтобы снять лимиты\n\n"
+        "4️⃣ Оплати подписку, чтобы снять лимиты\n\n"
         "<b>Команды:</b>\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
@@ -216,38 +215,6 @@ async def handle_premium_button(message: Message):
         provider_data=json.dumps(provider_data)
     )
 
-@dp.message(F.text == "💰 Разовый анализ")
-async def handle_single_payment(message: Message):
-    price_rub = 50
-    price_kopecks = price_rub * 100
-    provider_data = {
-        "receipt": {
-            "items": [
-                {
-                    "description": "Разовый анализ образа (снимает лимит)",
-                    "quantity": "1.00",
-                    "amount": {
-                        "value": f"{price_rub:.2f}",
-                        "currency": "RUB"
-                    },
-                    "vat_code": 1
-                }
-            ]
-        }
-    }
-    await bot.send_invoice(
-        chat_id=message.chat.id,
-        title="Разовый анализ",
-        description="Один дополнительный анализ образа",
-        payload="single_analysis",
-        provider_token=YOOKASSA_PROVIDER_TOKEN,
-        currency="RUB",
-        prices=[LabeledPrice(label="1 анализ", amount=price_kopecks)],
-        need_email=True,
-        send_email_to_provider=True,
-        provider_data=json.dumps(provider_data)
-    )
-
 @dp.message(F.text == "💬 Спросить стилиста")
 async def ask_stylist(message: Message):
     await message.answer(
@@ -268,7 +235,7 @@ async def main_help(message: Message):
         "1️⃣ Отправь фото в полный рост – получи анализ образа\n"
         "2️⃣ Напиши вопрос стилисту – получи текстовую консультацию\n"
         "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
-        "4️⃣ Оплати подписку или разовый анализ, чтобы снять лимиты\n\n"
+        "4️⃣ Оплати подписку, чтобы снять лимиты\n\n"
         "<b>Команды:</b>\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
@@ -325,10 +292,9 @@ async def handle_photo(message: Message):
             await message.reply(
                 "❌ <b>Лимит бесплатных запросов исчерпан</b>\n\n"
                 "У вас осталось 0 из 3 бесплатных анализов.\n"
-                "Чтобы продолжить пользоваться ботом, выберите один из вариантов:\n\n"
-                "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n"
-                "💰 <b>Разовый анализ</b> — 50₽ за фото\n\n"
-                "Нажмите соответствующую кнопку в главном меню, чтобы оплатить.",
+                "Чтобы продолжить, оформите премиум-подписку.\n\n"
+                "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n\n"
+                "Нажмите кнопку в главном меню, чтобы оплатить.",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
@@ -379,28 +345,26 @@ async def handle_photo(message: Message):
             reply_markup=get_main_keyboard()
         )
 
-# ---- Обработчик текстовых запросов (AI-ассистент) ----
+# ---- Обработчик текстовых вопросов (GigaChat) ----
 @dp.message(F.text)
 async def handle_text(message: Message):
     # Игнорируем команды
     if message.text.startswith('/'):
         return
     # Игнорируем сообщения, которые являются кнопками главного меню
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "💰 Разовый анализ", "💬 Спросить стилиста", "❓ Помощь"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "💬 Спросить стилиста", "❓ Помощь"]:
         return
 
     user_id = str(message.from_user.id)
-
     # Проверка лимита
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id):
             await message.reply(
                 "❌ <b>Лимит бесплатных запросов исчерпан</b>\n\n"
                 "Вы использовали все 3 бесплатных анализа.\n"
-                "Оплатите подписку или разовый анализ, чтобы продолжить.\n\n"
-                "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n"
-                "💰 <b>Разовый анализ</b> — 50₽ за запрос\n\n"
-                "Нажмите соответствующую кнопку в главном меню.",
+                "Оформите премиум-подписку, чтобы продолжить.\n\n"
+                "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n\n"
+                "Нажмите кнопку в главном меню, чтобы оплатить.",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
@@ -547,7 +511,6 @@ async def pre_checkout(query: PreCheckoutQuery):
 async def process_payment(message: Message):
     user_id = str(message.from_user.id)
     payload = message.successful_payment.invoice_payload
-    total_amount = message.successful_payment.total_amount
 
     if payload == "premium_30d":
         database.set_premium(user_id, duration_days=30)
@@ -555,18 +518,6 @@ async def process_payment(message: Message):
             "✅ <b>Подписка активирована!</b>\n"
             "Теперь вы можете анализировать образы без ограничений в течение месяца.\n"
             "Спасибо за покупку! 🌟",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-    elif payload == "single_analysis":
-        user = database.get_user(user_id)
-        used = user.get("total_free_requests", 0)
-        if used > 0:
-            database.update_user(user_id, {"total_free_requests": used - 1})
-        await message.answer(
-            "✅ <b>Оплачено!</b>\n"
-            "Теперь у вас есть один дополнительный бесплатный анализ.\n"
-            "Отправьте фото — я проанализирую его без ограничений! 📸",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
