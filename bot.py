@@ -4,7 +4,7 @@ import aiohttp
 import json
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -59,7 +59,7 @@ def get_style_keyboard():
 def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
-        [KeyboardButton(text="💎 Премиум"), KeyboardButton(text="🤝 Пригласить друга")],
+        [KeyboardButton(text="💎 Премиум"), KeyboardButton(text="🔗 Рефералка")],
         [KeyboardButton(text="💬 Спросить стилиста"), KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
@@ -73,24 +73,24 @@ def get_result_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ---- Обработчики команд ----
+@dp.message(CommandStart(deep_link=True, deep_link_encoded=False))
+async def cmd_start_with_ref(message: Message):
+    # Извлечение реферального кода
+    args = message.text.split()
+    if len(args) > 1:
+        ref_code = args[1]
+        user_id = str(message.from_user.id)
+        # Применяем реферал
+        database.apply_referral(user_id, ref_code)
+    # Дальше обычный старт
+    await cmd_start(message)
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = str(message.from_user.id)
-    # Разбираем аргументы команды /start
-    args = message.text.split()
-    referrer_code = None
-    if len(args) > 1:
-        referrer_code = args[1]
-
-    logger.info(f"Start command from user {user_id}, ref={referrer_code}")
-
-    # Если есть реферальный код, обрабатываем
-    if referrer_code and referrer_code.startswith("ref_"):
-        database.apply_referral(user_id, referrer_code)
-
+    logger.info(f"Start command from user {user_id}")
     if user_id in last_results:
         del last_results[user_id]
-
     try:
         user = database.get_user(user_id)
         if not user.get("gender") or not user.get("style_preference"):
@@ -120,20 +120,17 @@ async def cmd_start(message: Message):
 async def cmd_profile(message: Message):
     user_id = str(message.from_user.id)
     user = database.get_user(user_id)
-    used = user.get("total_free_requests", 0)
-    bonus = user.get("bonus_requests", 0)
-    remaining = max(0, 3 + bonus - used)
+    free = max(0, 3 - user.get("total_free_requests", 0)) + user.get("bonus_requests", 0)
     text = (
         f"👤 <b>Твой профиль</b>\n\n"
         f"• Пол: {user.get('gender', 'не указан')}\n"
         f"• Стиль: {user.get('style_preference', 'не указан')}\n"
-        f"• 📊 Бесплатных анализов осталось: {remaining}\n"
-        f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}\n"
-        f"• 🤝 Реферальная ссылка: {database.get_referral_link(user_id)}"
+        f"• 📊 Бесплатных анализов осталось: {free}\n"
+        f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_profile")],
-        [InlineKeyboardButton(text="📤 Скопировать ссылку", callback_data="copy_referral")]
+        [InlineKeyboardButton(text="🔗 Моя реферальная ссылка", callback_data="show_referral")]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -148,14 +145,32 @@ async def cmd_premium(message: Message):
     else:
         used = database.get_user(user_id).get("total_free_requests", 0)
         bonus = database.get_user(user_id).get("bonus_requests", 0)
-        remaining = max(0, 3 + bonus - used)
+        remaining = max(0, 3 - used) + bonus
         await message.answer(
-            f"🔓 У вас осталось <b>{remaining}</b> бесплатных анализов.\n\n"
+            f"🔓 У вас осталось <b>{remaining}</b> бесплатных анализов (3 базовых + бонусы).\n\n"
             "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n\n"
             "Нажмите кнопку «Премиум» в главном меню, чтобы оплатить.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
+
+@dp.message(Command("referral"))
+async def cmd_referral(message: Message):
+    user_id = str(message.from_user.id)
+    link = database.get_referral_link(user_id)
+    user = database.get_user(user_id)
+    bonus = user.get("bonus_requests", 0)
+    await message.answer(
+        f"🔗 <b>Твоя реферальная ссылка</b>\n\n"
+        f"{link}\n\n"
+        f"📢 <b>Как это работает</b>\n"
+        f"• Твой друг переходит по ссылке и начинает пользоваться ботом\n"
+        f"• Вы оба получаете <b>+1 бесплатный анализ</b>!\n"
+        f"• Сейчас у тебя <b>{bonus}</b> бонусных анализов.\n\n"
+        f"Приглашай друзей — получай больше бесплатных анализов!",
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard()
+    )
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
@@ -165,11 +180,12 @@ async def cmd_help(message: Message):
         "2️⃣ Напиши вопрос стилисту – получи текстовую консультацию\n"
         "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
         "4️⃣ Оплати подписку, чтобы снять лимиты\n"
-        "5️⃣ Приглашай друзей по своей ссылке – получай +1 бесплатный анализ за каждого\n\n"
+        "5️⃣ Приглашай друзей по реферальной ссылке – получай бонусные анализы\n\n"
         "<b>Команды:</b>\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
         "/premium — информация о подписке\n"
+        "/referral — реферальная ссылка\n"
         "/favorites — показать сохранённые образы\n"
         "/help — эта справка\n\n"
         "🔜 <b>Скоро в боте:</b>\n"
@@ -240,21 +256,9 @@ async def handle_premium_button(message: Message):
         provider_data=json.dumps(provider_data)
     )
 
-@dp.message(F.text == "🤝 Пригласить друга")
-async def invite_friend(message: Message):
-    user_id = str(message.from_user.id)
-    link = database.get_referral_link(user_id)
-    await message.answer(
-        f"🤝 <b>Пригласи друга и получи бонусы!</b>\n\n"
-        f"Поделись этой ссылкой с другом. Когда он перейдёт по ней и начнёт пользоваться ботом, "
-        f"вы оба получите <b>+1 бесплатный анализ</b>!\n\n"
-        f"🔗 <b>Твоя реферальная ссылка:</b>\n{link}\n\n"
-        f"Просто скопируй и отправь другу в Telegram.",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Скопировать ссылку", callback_data="copy_referral")]
-        ])
-    )
+@dp.message(F.text == "🔗 Рефералка")
+async def main_referral(message: Message):
+    await cmd_referral(message)
 
 @dp.message(F.text == "💬 Спросить стилиста")
 async def ask_stylist(message: Message):
@@ -271,33 +275,13 @@ async def ask_stylist(message: Message):
 
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
-    await message.answer(
-        "💡 <b>Как пользоваться ботом</b>\n\n"
-        "1️⃣ Отправь фото в полный рост – получи анализ образа\n"
-        "2️⃣ Напиши вопрос стилисту – получи текстовую консультацию\n"
-        "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
-        "4️⃣ Оплати подписку, чтобы снять лимиты\n"
-        "5️⃣ Приглашай друзей по своей ссылке – получай +1 бесплатный анализ за каждого\n\n"
-        "<b>Команды:</b>\n"
-        "/start — начать заново\n"
-        "/profile — мой профиль\n"
-        "/premium — информация о подписке\n"
-        "/favorites — показать сохранённые образы\n"
-        "/help — эта справка\n\n"
-        "🔜 <b>Скоро в боте:</b>\n"
-        "• Интеграция с магазинами\n"
-        "• Виртуальная примерка\n"
-        "• Личный гардероб\n"
-        "• Сборка образов по фото",
-        parse_mode="HTML",
-        reply_markup=get_main_keyboard()
-    )
+    await cmd_help(message)
 
 # ---- Обработчики выбора пола и стиля (при первом опросе) ----
 @dp.message(F.text.in_(["👩 Девушка", "👨 Парень"]))
 async def set_gender(message: Message):
     user_id = str(message.from_user.id)
-    gender = message.text.split()[1]  # "Девушка" или "Парень"
+    gender = message.text.split()[1]
     database.set_user_info(user_id, gender=gender)
     await message.answer(
         "Отлично! А какой стиль тебе ближе?",
@@ -338,10 +322,10 @@ async def handle_photo(message: Message):
         if not database.can_request(user_id):
             await message.reply(
                 "❌ <b>Лимит бесплатных запросов исчерпан</b>\n\n"
-                "У вас осталось 0 из 3 бесплатных анализов.\n"
-                "Чтобы продолжить пользоваться ботом, оформите премиум-подписку.\n\n"
-                "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n\n"
-                "Нажмите кнопку «Премиум» в главном меню, чтобы оплатить.",
+                "Вы использовали все бесплатные анализы.\n"
+                "Чтобы продолжить, оформите премиум-подписку или пригласите друга по реферальной ссылке.\n\n"
+                "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n"
+                "🔗 <b>Реферальная ссылка</b> — в меню «Профиль» или команда /referral",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
@@ -383,7 +367,7 @@ async def handle_photo(message: Message):
         )
 
         if user_id != DEVELOPER_ID and not database.is_premium(user_id):
-            database.use_request(user_id)  # списываем запрос (бонус или бесплатный)
+            database.use_request(user_id)  # списываем запрос
 
     except Exception as e:
         logger.exception("Ошибка обработки фото: %s", e)
@@ -397,7 +381,7 @@ async def handle_photo(message: Message):
 async def handle_text(message: Message):
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "🤝 Пригласить друга", "💬 Спросить стилиста", "❓ Помощь"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь"]:
         return
 
     user_id = str(message.from_user.id)
@@ -406,9 +390,9 @@ async def handle_text(message: Message):
             await message.reply(
                 "❌ <b>Лимит бесплатных запросов исчерпан</b>\n\n"
                 "Вы использовали все бесплатные анализы.\n"
-                "Оформите премиум-подписку, чтобы продолжить.\n\n"
-                "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n\n"
-                "Нажмите кнопку «Премиум» в главном меню.",
+                "Оформите премиум-подписку или пригласите друга по реферальной ссылке.\n\n"
+                "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n"
+                "🔗 <b>Реферальная ссылка</b> — в меню «Профиль» или команда /referral",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
@@ -431,7 +415,7 @@ async def handle_text(message: Message):
         await message.reply(answer, parse_mode="HTML", reply_markup=get_main_keyboard())
 
         if user_id != DEVELOPER_ID and not database.is_premium(user_id):
-            database.use_request(user_id)  # списываем запрос
+            database.use_request(user_id)
 
     except Exception as e:
         logger.exception("Ошибка текстового запроса: %s", e)
@@ -504,12 +488,10 @@ async def set_style_callback(callback: CallbackQuery):
     await cmd_profile(callback.message)
     await callback.message.delete()
 
-@dp.callback_query(lambda c: c.data == "copy_referral")
-async def copy_referral_callback(callback: CallbackQuery):
-    user_id = str(callback.from_user.id)
-    link = database.get_referral_link(user_id)
-    await callback.answer("Ссылка скопирована в буфер обмена!", show_alert=False)
-    await callback.message.answer(f"🔗 Ваша реферальная ссылка:\n{link}")
+@dp.callback_query(lambda c: c.data == "show_referral")
+async def show_referral_callback(callback: CallbackQuery):
+    await cmd_referral(callback.message)
+    await callback.answer()
     await callback.message.delete()
 
 # ---- Обработчики inline-кнопок (для результата анализа) ----
@@ -563,7 +545,7 @@ async def process_payment(message: Message):
         database.set_premium(user_id, duration_days=30)
         await message.answer(
             "✅ <b>Подписка активирована!</b>\n"
-            "Теперь вы можете анализировать образы без ограничений в течение месяца.\n"
+            "Теперь вы можете анализировать образы без ограничений.\n"
             "Спасибо за покупку! 🌟",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
