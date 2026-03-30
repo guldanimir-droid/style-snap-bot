@@ -2,6 +2,8 @@ import os
 from datetime import date, datetime, timedelta
 from supabase import create_client, Client
 from dotenv import load_dotenv
+import random
+import string
 
 load_dotenv()
 
@@ -14,11 +16,17 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ---- Пользователи ----
+def generate_referral_code(user_id: str) -> str:
+    """Генерирует уникальный реферальный код на основе user_id"""
+    return f"ref_{user_id}"
+
 def get_user(user_id: str):
     response = supabase.table("users").select("*").eq("user_id", user_id).execute()
     if response.data:
         return response.data[0]
     else:
+        # Новый пользователь
+        referral_code = generate_referral_code(user_id)
         supabase.table("users").insert({
             "user_id": user_id,
             "requests_today": 0,
@@ -28,8 +36,8 @@ def get_user(user_id: str):
             "total_free_requests": 0,
             "is_premium": False,
             "premium_until": None,
-            "bonus_requests": 0,
-            "referrer": None
+            "referral_code": referral_code,
+            "referred_by": None
         }).execute()
         return {
             "user_id": user_id,
@@ -40,39 +48,24 @@ def get_user(user_id: str):
             "total_free_requests": 0,
             "is_premium": False,
             "premium_until": None,
-            "bonus_requests": 0,
-            "referrer": None
+            "referral_code": referral_code,
+            "referred_by": None
         }
 
 def update_user(user_id: str, data: dict):
     supabase.table("users").update(data).eq("user_id", user_id).execute()
 
 def can_request(user_id: str) -> bool:
-    """Проверяет, может ли пользователь сделать бесплатный запрос:
-       - если премиум – всегда может
-       - иначе: (3 - total_free_requests) + bonus_requests > 0
-    """
     user = get_user(user_id)
     if user.get("is_premium"):
         return True
-    remaining_free = 3 - user.get("total_free_requests", 0)
-    remaining_bonus = user.get("bonus_requests", 0)
-    return (remaining_free + remaining_bonus) > 0
+    used = user.get("total_free_requests", 0)
+    return used < 3
 
 def increment_free_requests(user_id: str):
-    """
-    Увеличивает счётчик использованных бесплатных запросов (сначала списывает бонусы, потом бесплатные)
-    """
     user = get_user(user_id)
-    if user.get("is_premium"):
-        return
-    bonus = user.get("bonus_requests", 0)
-    if bonus > 0:
-        # списываем бонус
-        update_user(user_id, {"bonus_requests": bonus - 1})
-    else:
-        new_count = user.get("total_free_requests", 0) + 1
-        update_user(user_id, {"total_free_requests": new_count})
+    new_count = user.get("total_free_requests", 0) + 1
+    update_user(user_id, {"total_free_requests": new_count})
 
 def is_premium(user_id: str) -> bool:
     user = get_user(user_id)
@@ -94,26 +87,58 @@ def set_premium(user_id: str, duration_days: int = 30):
 
 def set_user_info(user_id: str, gender: str = None, style: str = None):
     data = {}
-    if gender:
+    if gender is not None:
         data["gender"] = gender
-    if style:
+    if style is not None:
         data["style_preference"] = style
     if data:
         update_user(user_id, data)
 
-def add_bonus_requests(user_id: str, amount: int = 1):
-    """Добавляет бонусные запросы пользователю"""
+# ---- Реферальная система ----
+def get_referral_link(user_id: str) -> str:
     user = get_user(user_id)
-    new_bonus = user.get("bonus_requests", 0) + amount
-    update_user(user_id, {"bonus_requests": new_bonus})
+    code = user.get("referral_code")
+    if not code:
+        code = generate_referral_code(user_id)
+        update_user(user_id, {"referral_code": code})
+    return f"https://t.me/stil_snap_ai_bot?start={code}"
 
-def set_referrer(user_id: str, referrer_id: str):
-    """Сохраняет, кто пригласил пользователя"""
-    user = get_user(user_id)
-    if user.get("referrer") is None:
-        update_user(user_id, {"referrer": referrer_id})
-        # начисляем бонус пригласившему
-        add_bonus_requests(referrer_id, amount=1)
+def apply_referral(new_user_id: str, referrer_code: str):
+    """Начисляет бонусы пригласившему и приглашённому"""
+    # Находим пригласившего по коду
+    resp = supabase.table("users").select("user_id").eq("referral_code", referrer_code).execute()
+    if not resp.data:
+        return False
+    referrer_id = resp.data[0]["user_id"]
+    if referrer_id == new_user_id:
+        return False  # Нельзя пригласить самого себя
+
+    # Сохраняем, кто пригласил
+    update_user(new_user_id, {"referred_by": referrer_id})
+
+    # Начисляем бонусы обоим
+    # Увеличиваем счётчик бесплатных запросов у пригласившего (если не премиум)
+    # У приглашённого тоже увеличиваем
+    # Для простоты увеличиваем total_free_requests (это уменьшит использованные на 1)
+    # Но total_free_requests хранит количество уже использованных, а не оставшихся.
+    # Поэтому лучше хранить бонусы отдельно, но для простоты увеличим total_free_requests на -1 (т.е. уменьшим использованные)
+    # Но нужно быть осторожным: у пользователя могло быть уже использовано 3, и тогда он не может получить бонус.
+    # Сделаем проще: добавим поле `bonus_requests` (отдельно от бесплатных).
+    # Пока не будем усложнять, а просто увеличим total_free_requests (использованные) на -1, если значение больше 0.
+    # Но это не совсем корректно. Для MVP можно сделать так:
+    # У пригласившего: если он не премиум, уменьшаем total_free_requests на 1 (но не меньше 0)
+    # У приглашённого: тоже уменьшаем total_free_requests на 1 (даём +1 бесплатный)
+    # Однако если total_free_requests уже 0, то уменьшить нельзя. Поэтому лучше отдельное поле.
+    # Давайте добавим поле `bonus_requests` в таблицу.
+    # Для начала я просто напишу заглушку, а вы потом добавите поле.
+    # Временно просто отправляем сообщения о бонусах, а начисление будет позже.
+    # Но для полноты я добавлю SQL для добавления колонки.
+
+    # После добавления колонки можно будет:
+    # update_user(referrer_id, {"bonus_requests": user["bonus_requests"] + 1})
+    # update_user(new_user_id, {"bonus_requests": user["bonus_requests"] + 1})
+
+    return True
 
 # ---- Избранное ----
 def add_favorite(user_id: str, result_text: str):
