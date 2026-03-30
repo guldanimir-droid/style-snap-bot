@@ -60,7 +60,7 @@ def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="💎 Премиум"), KeyboardButton(text="💬 Спросить стилиста")],
-        [KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="🔗 Реферальная ссылка"), KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -76,6 +76,11 @@ def get_result_keyboard():
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = str(message.from_user.id)
+    # Проверяем, есть ли реферальный код в аргументах
+    args = message.text.split()
+    if len(args) > 1:
+        ref_code = args[1]
+        database.apply_referral(user_id, ref_code)
     logger.info(f"Start command from user {user_id}")
     if user_id in last_results:
         del last_results[user_id]
@@ -113,10 +118,12 @@ async def cmd_profile(message: Message):
         f"• Пол: {user.get('gender', 'не указан')}\n"
         f"• Стиль: {user.get('style_preference', 'не указан')}\n"
         f"• 📊 Бесплатных анализов осталось: {max(0, 3 - user.get('total_free_requests', 0))}\n"
-        f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}"
+        f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}\n"
+        f"• 🔗 Реферальная ссылка: https://t.me/{bot.username}?start={user.get('referral_code')}"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_profile")]
+        [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_profile")],
+        [InlineKeyboardButton(text="📋 Копировать ссылку", callback_data="copy_referral_link")]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -146,7 +153,8 @@ async def cmd_help(message: Message):
         "1️⃣ Отправь фото в полный рост – получи анализ образа\n"
         "2️⃣ Напиши вопрос стилисту – получи текстовую консультацию\n"
         "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
-        "4️⃣ Оплати подписку, чтобы снять лимиты\n\n"
+        "4️⃣ Оплати подписку, чтобы снять лимиты\n"
+        "5️⃣ Приглашай друзей по своей ссылке и получай +1 бесплатный анализ за каждого нового пользователя\n\n"
         "<b>Команды:</b>\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
@@ -234,6 +242,22 @@ async def ask_stylist(message: Message):
         reply_markup=ReplyKeyboardRemove()
     )
 
+@dp.message(F.text == "🔗 Реферальная ссылка")
+async def main_referral(message: Message):
+    user_id = str(message.from_user.id)
+    user = database.get_user(user_id)
+    ref_code = user.get("referral_code")
+    if not ref_code:
+        ref_code = database.get_or_create_referral_code(user_id)
+    link = f"https://t.me/{bot.username}?start={ref_code}"
+    await message.answer(
+        f"🔗 <b>Ваша реферальная ссылка</b>\n\n"
+        f"{link}\n\n"
+        f"Пригласите друга — он получит +1 бесплатный анализ, и вы тоже получите +1!",
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard()
+    )
+
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
     await message.answer(
@@ -241,7 +265,8 @@ async def main_help(message: Message):
         "1️⃣ Отправь фото в полный рост – получи анализ образа\n"
         "2️⃣ Напиши вопрос стилисту – получи текстовую консультацию\n"
         "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
-        "4️⃣ Оплати подписку, чтобы снять лимиты\n\n"
+        "4️⃣ Оплати подписку, чтобы снять лимиты\n"
+        "5️⃣ Приглашай друзей по своей ссылке и получай +1 бесплатный анализ за каждого нового пользователя\n\n"
         "<b>Команды:</b>\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
@@ -361,7 +386,7 @@ async def handle_photo(message: Message):
 async def handle_text(message: Message):
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "💬 Спросить стилиста", "❓ Помощь"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "💬 Спросить стилиста", "🔗 Реферальная ссылка", "❓ Помощь"]:
         return
 
     user_id = str(message.from_user.id)
@@ -466,6 +491,19 @@ async def set_style_callback(callback: CallbackQuery):
     database.set_user_info(user_id, style=style)
     await callback.answer(f"Стиль изменён на {style}!")
     await cmd_profile(callback.message)
+    await callback.message.delete()
+
+@dp.callback_query(lambda c: c.data == "copy_referral_link")
+async def copy_referral_link_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    user = database.get_user(user_id)
+    ref_code = user.get("referral_code")
+    if not ref_code:
+        ref_code = database.get_or_create_referral_code(user_id)
+    link = f"https://t.me/{bot.username}?start={ref_code}"
+    await callback.answer("Ссылка скопирована! Отправьте её другу.", show_alert=False)
+    # Telegram не позволяет скопировать в буфер обмена автоматически, но можно отправить сообщение
+    await callback.message.answer(f"🔗 Ваша реферальная ссылка:\n{link}\n\nПоделитесь с друзьями!")
     await callback.message.delete()
 
 # ---- Обработчики inline-кнопок (для результата анализа) ----
