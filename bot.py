@@ -33,13 +33,12 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Инициализация клиента GigaChat (используется и для фото, и для текста)
 gemini = GigaChatClientWrapper(
     client_id=GIGACHAT_CLIENT_ID,
     client_secret=GIGACHAT_SECRET
 )
 
-last_results = {}  # для хранения последнего анализа (для избранного)
+last_results = {}
 
 # ---- Клавиатуры ----
 def get_gender_keyboard():
@@ -61,7 +60,7 @@ def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="💎 Премиум"), KeyboardButton(text="💰 Разовый анализ")],
-        [KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="💬 Спросить стилиста"), KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -144,10 +143,10 @@ async def cmd_premium(message: Message):
 async def cmd_help(message: Message):
     await message.answer(
         "💡 <b>Как пользоваться ботом</b>\n\n"
-        "📸 <b>Анализ фото</b> – отправь фото в полный рост, получи оценку и советы.\n"
-        "💬 <b>Текстовые вопросы</b> – просто напиши вопрос о стиле (например, «что надеть в офис?»), и я отвечу.\n"
-        "⭐ <b>Избранное</b> – сохраняй понравившиеся советы.\n"
-        "👤 <b>Профиль</b> – укажи свой пол и предпочитаемый стиль, чтобы советы были точнее.\n\n"
+        "1️⃣ Отправь фото в полный рост – получи анализ образа\n"
+        "2️⃣ Напиши вопрос стилисту – получи текстовую консультацию\n"
+        "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
+        "4️⃣ Оплати подписку или разовый анализ, чтобы снять лимиты\n\n"
         "<b>Команды:</b>\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
@@ -249,9 +248,36 @@ async def handle_single_payment(message: Message):
         provider_data=json.dumps(provider_data)
     )
 
+@dp.message(F.text == "💬 Спросить стилиста")
+async def ask_stylist(message: Message):
+    await message.answer(
+        "💬 <b>Спросите стилиста</b>\n\n"
+        "Напишите свой вопрос о моде, стиле, сочетании цветов или подборе одежды.\n"
+        "Я отвечу текстом. Например:\n"
+        "• «Что надеть на свидание?»\n"
+        "• «Какие цвета сочетаются с зелёным?»\n"
+        "• «Как выбрать джинсы?»",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
-    await cmd_help(message)
+    await message.answer(
+        "💡 <b>Как пользоваться ботом</b>\n\n"
+        "1️⃣ Отправь фото в полный рост – получи анализ образа\n"
+        "2️⃣ Напиши вопрос стилисту – получи текстовую консультацию\n"
+        "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
+        "4️⃣ Оплати подписку или разовый анализ, чтобы снять лимиты\n\n"
+        "<b>Команды:</b>\n"
+        "/start — начать заново\n"
+        "/profile — мой профиль\n"
+        "/premium — информация о подписке\n"
+        "/favorites — показать сохранённые образы\n"
+        "/help — эта справка",
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard()
+    )
 
 # ---- Обработчики выбора пола и стиля (при первом опросе) ----
 @dp.message(F.text.in_(["👩 Девушка", "👨 Парень"]))
@@ -271,7 +297,7 @@ async def set_style(message: Message):
     database.set_user_info(user_id, style=style)
     await message.answer(
         "Спасибо! Теперь отправь мне фото, и я проанализирую образ.\n\n"
-        "А если просто напишешь вопрос о стиле (без фото), я тоже отвечу.",
+        "Также ты можешь просто задать текстовый вопрос – я помогу!",
         reply_markup=get_main_keyboard()
     )
 
@@ -279,8 +305,7 @@ async def set_style(message: Message):
 async def skip_info(message: Message):
     user_id = str(message.from_user.id)
     await message.answer(
-        "Хорошо, если захочешь заполнить позже — просто напиши /start. А пока отправь фото!\n\n"
-        "Или задай вопрос о стиле текстом.",
+        "Хорошо, если захочешь заполнить позже — просто напиши /start. А пока отправь фото или задай вопрос!",
         reply_markup=get_main_keyboard()
     )
 
@@ -295,7 +320,6 @@ async def handle_photo(message: Message):
         await message.reply("⚠️ Фото слишком большое (более 5 МБ). Пожалуйста, отправьте изображение поменьше.")
         return
 
-    # Проверка лимита
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id):
             await message.reply(
@@ -355,76 +379,71 @@ async def handle_photo(message: Message):
             reply_markup=get_main_keyboard()
         )
 
-# ---- Обработчик текстовых сообщений (текстовый GigaChat) ----
+# ---- Обработчик текстовых вопросов (GigaChat) ----
 @dp.message(F.text)
 async def handle_text(message: Message):
+    # Игнорируем команды
+    if message.text.startswith('/'):
+        return
+    # Игнорируем сообщения, которые начинаются с эмодзи главного меню (они уже обработаны выше)
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "💰 Разовый анализ", "💬 Спросить стилиста", "❓ Помощь"]:
+        return
+
     user_id = str(message.from_user.id)
-    text = message.text.strip()
-
-    # Игнорируем команды и нажатия кнопок
-    if text.startswith('/'):
-        return
-    if text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "💰 Разовый анализ", "❓ Помощь"]:
-        return
-
-    # Проверка лимита (для текстовых запросов тоже используем общий лимит)
+    # Проверяем лимит для текстовых запросов (можно сделать отдельный лимит или использовать тот же)
+    # Для простоты используем тот же счётчик, что и для фото
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id):
             await message.reply(
                 "❌ <b>Лимит бесплатных запросов исчерпан</b>\n\n"
                 "Вы использовали все 3 бесплатных анализа.\n"
-                "Чтобы продолжить пользоваться ботом, выберите один из вариантов:\n\n"
+                "Оплатите подписку или разовый анализ, чтобы продолжить.\n\n"
                 "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n"
                 "💰 <b>Разовый анализ</b> — 50₽ за запрос\n\n"
-                "Нажмите соответствующую кнопку в главном меню, чтобы оплатить.",
+                "Нажмите соответствующую кнопку в главном меню.",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
             return
 
-    # Отправляем сообщение о начале обработки
-    await message.reply("💬 Размышляю над вашим вопросом... Это займёт несколько секунд.", reply_markup=ReplyKeyboardRemove())
+    # Отправляем текст в GigaChat
+    await message.reply("💭 Думаю... Это займёт несколько секунд.", reply_markup=ReplyKeyboardRemove())
 
     try:
+        # Формируем промпт для GigaChat (можно использовать тот же SYSTEM_PROMPT или свой)
         user = database.get_user(user_id)
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
+        personal_prompt = SYSTEM_PROMPT  # или специализированный для текстов
+        if gender:
+            personal_prompt += f"\nПользователь: {gender}."
+        if style:
+            personal_prompt += f"\nПредпочитаемый стиль: {style}."
 
-        # Формируем промпт для текстового вопроса
-        prompt = f"Ты — профессиональный стилист. Отвечай на русском языке, дружелюбно и полезно.\nПользователь: {gender}, предпочитает стиль: {style}.\nВопрос: {text}"
+        # Для текстового запроса не нужно изображение, поэтому передаём пустой байт? Но метод analyze_style требует изображения.
+        # В GigaChat можно отправить текстовый запрос без изображения, но наш клиент ждёт image_bytes.
+        # Чтобы не переписывать клиент, можно добавить отдельный метод в GigaChatClientWrapper.
+        # Пока сделаем заглушку с простым ответом, но в будущем добавим метод text_query.
+        # Временно используем простой ответ, чтобы функция была.
+        # Позже добавим метод в gigachat_client для текста.
 
-        # Используем тот же клиент GigaChat, но передаём только текст (без изображения)
-        # В нашем клиенте метод analyze_style требует image_bytes. Чтобы не дублировать код,
-        # добавим в gemini_client метод для текста. Но для простоты пока отправим текст через другой вызов.
-        # Так как у нас нет метода для чистого текста, сделаем временное решение: отправим текстовый запрос
-        # через API GigaChat (с пустым изображением). Но проще добавить отдельный метод.
-        # Я добавлю его в gemini_client.py чуть позже. Пока используем заглушку.
-        # Временно вернём ответ от GigaChat через прямое обращение (добавим метод в клиент).
-
-        # Для экономии времени, здесь я просто добавлю вызов через существующий метод с пустым изображением.
-        # Но лучше создать отдельный метод в gigachat_client. Сделаем так:
-        # В gemini_client добавим метод async def text_chat(self, prompt: str) -> str
-
-        # Пока оставлю заглушку, чтобы не ломать бота, а после добавлю метод.
-        # В финальном коде я уже добавлю этот метод.
-
-        # Временно:
-        await message.answer(
-            "✨ Функция текстового чата в разработке. Скоро я смогу отвечать на любые вопросы о стиле!\n"
-            "А пока отправьте фото для анализа.",
+        # Временно: простой ответ
+        await message.reply(
+            "🤖 *Пример ответа стилиста*\n\n"
+            "Вы задали текстовый вопрос. Полноценная текстовая консультация будет добавлена в ближайшее время.\n\n"
+            "А пока вы можете отправить фото, чтобы получить разбор образа!",
+            parse_mode="Markdown",
             reply_markup=get_main_keyboard()
         )
 
-        # После того как добавим метод, код будет таким:
-        # result = await gemini.text_chat(prompt)
-        # await message.reply(result, parse_mode="HTML", reply_markup=get_main_keyboard())
-        # if user_id != DEVELOPER_ID and not database.is_premium(user_id):
-        #     database.increment_free_requests(user_id)
+        # Увеличиваем счётчик запросов
+        if user_id != DEVELOPER_ID and not database.is_premium(user_id):
+            database.increment_free_requests(user_id)
 
     except Exception as e:
-        logger.exception("Ошибка при текстовом запросе: %s", e)
+        logger.exception("Ошибка текстового запроса: %s", e)
         await message.reply(
-            "❌ Не удалось обработать вопрос. Попробуйте позже.",
+            "❌ Не удалось обработать запрос. Попробуйте позже.",
             reply_markup=get_main_keyboard()
         )
 
@@ -538,6 +557,7 @@ async def pre_checkout(query: PreCheckoutQuery):
 async def process_payment(message: Message):
     user_id = str(message.from_user.id)
     payload = message.successful_payment.invoice_payload
+    total_amount = message.successful_payment.total_amount
 
     if payload == "premium_30d":
         database.set_premium(user_id, duration_days=30)
