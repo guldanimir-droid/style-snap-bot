@@ -78,3 +78,40 @@ class GigaChatClientWrapper:
                     return data["choices"][0]["message"]["content"]
                 except (KeyError, IndexError) as e:
                     raise Exception(f"Unexpected GigaChat response: {data}")
+
+    async def generate_text(self, prompt: str, system_prompt: str = None) -> str:
+        """
+        Отправляет текстовый запрос к GigaChat.
+        Если system_prompt не передан, используется базовый промпт стилиста.
+        """
+        token = await self._get_token()
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": "GigaChat",
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 1024
+        }
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.api_url, json=payload, headers=headers, ssl=False) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"GigaChat API error {resp.status}: {error_text}")
+                    raise Exception(f"GigaChat API error {resp.status}: {error_text}")
+                data = await resp.json()
+                try:
+                    return data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError) as e:
+                    raise Exception(f"Unexpected GigaChat response: {data}")
