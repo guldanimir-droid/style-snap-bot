@@ -379,19 +379,19 @@ async def handle_photo(message: Message):
             reply_markup=get_main_keyboard()
         )
 
-# ---- Обработчик текстовых вопросов (GigaChat) ----
+# ---- Обработчик текстовых запросов (AI-ассистент) ----
 @dp.message(F.text)
 async def handle_text(message: Message):
     # Игнорируем команды
     if message.text.startswith('/'):
         return
-    # Игнорируем сообщения, которые начинаются с эмодзи главного меню (они уже обработаны выше)
+    # Игнорируем сообщения, которые являются кнопками главного меню
     if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "💰 Разовый анализ", "💬 Спросить стилиста", "❓ Помощь"]:
         return
 
     user_id = str(message.from_user.id)
-    # Проверяем лимит для текстовых запросов (можно сделать отдельный лимит или использовать тот же)
-    # Для простоты используем тот же счётчик, что и для фото
+
+    # Проверка лимита
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id):
             await message.reply(
@@ -406,35 +406,25 @@ async def handle_text(message: Message):
             )
             return
 
-    # Отправляем текст в GigaChat
     await message.reply("💭 Думаю... Это займёт несколько секунд.", reply_markup=ReplyKeyboardRemove())
 
     try:
-        # Формируем промпт для GigaChat (можно использовать тот же SYSTEM_PROMPT или свой)
+        # Получаем данные пользователя для персонализации
         user = database.get_user(user_id)
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
-        personal_prompt = SYSTEM_PROMPT  # или специализированный для текстов
-        if gender:
-            personal_prompt += f"\nПользователь: {gender}."
-        if style:
-            personal_prompt += f"\nПредпочитаемый стиль: {style}."
-
-        # Для текстового запроса не нужно изображение, поэтому передаём пустой байт? Но метод analyze_style требует изображения.
-        # В GigaChat можно отправить текстовый запрос без изображения, но наш клиент ждёт image_bytes.
-        # Чтобы не переписывать клиент, можно добавить отдельный метод в GigaChatClientWrapper.
-        # Пока сделаем заглушку с простым ответом, но в будущем добавим метод text_query.
-        # Временно используем простой ответ, чтобы функция была.
-        # Позже добавим метод в gigachat_client для текста.
-
-        # Временно: простой ответ
-        await message.reply(
-            "🤖 *Пример ответа стилиста*\n\n"
-            "Вы задали текстовый вопрос. Полноценная текстовая консультация будет добавлена в ближайшее время.\n\n"
-            "А пока вы можете отправить фото, чтобы получить разбор образа!",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard()
+        # Формируем системный промпт для текстовых консультаций
+        text_prompt = (
+            "Ты — профессиональный стилист-мужчина. Отвечай дружелюбно, но сдержанно, как эксперт. "
+            "Говори **только на русском языке**, используй мужской род о себе. "
+            "Избегай иностранных слов и сложных терминов, говори просто и понятно. "
+            "Обращайся к клиенту на «ты». Учитывай реалии 2026 года и российский контекст (бренды с WB/Ozon).\n\n"
+            f"Пользователь: {gender if gender else 'не указан'}, стиль: {style if style else 'не указан'}."
         )
+        # Получаем ответ от GigaChat
+        answer = await gemini.generate_text(message.text, system_prompt=text_prompt)
+
+        await message.reply(answer, parse_mode="HTML", reply_markup=get_main_keyboard())
 
         # Увеличиваем счётчик запросов
         if user_id != DEVELOPER_ID and not database.is_premium(user_id):
