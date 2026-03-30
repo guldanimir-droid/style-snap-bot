@@ -94,8 +94,9 @@ async def cmd_start(message: Message):
             await message.answer(
                 "✨ <b>Снова рад тебя видеть!</b>\n\n"
                 "Отправь мне своё фото в полный рост, и я оценю твой образ, дам советы "
-                "и подберу вещи с учётом трендов 2026.\n\n"
-                "📸 <b>Жду фото!</b>",
+                "с учётом трендов 2026.\n\n"
+                "Также можешь задать текстовый вопрос о моде — я помогу!\n\n"
+                "📸 <b>Жду фото или вопрос!</b>",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
@@ -133,7 +134,7 @@ async def cmd_premium(message: Message):
         await message.answer(
             f"🔓 У вас осталось <b>{remaining}</b> бесплатных анализов из 3.\n\n"
             "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n\n"
-            "Нажмите кнопку «💎 Премиум» в главном меню, чтобы оплатить.",
+            "Нажмите кнопку «Премиум» в главном меню, чтобы оплатить.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -151,7 +152,12 @@ async def cmd_help(message: Message):
         "/profile — мой профиль\n"
         "/premium — информация о подписке\n"
         "/favorites — показать сохранённые образы\n"
-        "/help — эта справка",
+        "/help — эта справка\n\n"
+        "🔜 <b>Скоро в боте:</b>\n"
+        "• Интеграция с магазинами\n"
+        "• Виртуальная примерка\n"
+        "• Личный гардероб\n"
+        "• Сборка образов по фото",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
@@ -241,7 +247,12 @@ async def main_help(message: Message):
         "/profile — мой профиль\n"
         "/premium — информация о подписке\n"
         "/favorites — показать сохранённые образы\n"
-        "/help — эта справка",
+        "/help — эта справка\n\n"
+        "🔜 <b>Скоро в боте:</b>\n"
+        "• Интеграция с магазинами\n"
+        "• Виртуальная примерка\n"
+        "• Личный гардероб\n"
+        "• Сборка образов по фото",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
@@ -250,7 +261,7 @@ async def main_help(message: Message):
 @dp.message(F.text.in_(["👩 Девушка", "👨 Парень"]))
 async def set_gender(message: Message):
     user_id = str(message.from_user.id)
-    gender = message.text.split()[1]
+    gender = message.text.split()[1]  # "Девушка" или "Парень"
     database.set_user_info(user_id, gender=gender)
     await message.answer(
         "Отлично! А какой стиль тебе ближе?",
@@ -292,9 +303,9 @@ async def handle_photo(message: Message):
             await message.reply(
                 "❌ <b>Лимит бесплатных запросов исчерпан</b>\n\n"
                 "У вас осталось 0 из 3 бесплатных анализов.\n"
-                "Оформите подписку, чтобы продолжить.\n\n"
+                "Чтобы продолжить пользоваться ботом, оформите премиум-подписку.\n\n"
                 "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n\n"
-                "Нажмите кнопку «💎 Премиум» в главном меню, чтобы оплатить.",
+                "Нажмите кнопку «Премиум» в главном меню, чтобы оплатить.",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
@@ -354,15 +365,14 @@ async def handle_text(message: Message):
         return
 
     user_id = str(message.from_user.id)
-
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id):
             await message.reply(
                 "❌ <b>Лимит бесплатных запросов исчерпан</b>\n\n"
                 "Вы использовали все 3 бесплатных анализа.\n"
-                "Оформите подписку, чтобы продолжить.\n\n"
+                "Оформите премиум-подписку, чтобы продолжить.\n\n"
                 "💎 <b>Премиум-подписка</b> — 299₽/мес, безлимит\n\n"
-                "Нажмите кнопку «💎 Премиум» в главном меню, чтобы оплатить.",
+                "Нажмите кнопку «Премиум» в главном меню.",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
