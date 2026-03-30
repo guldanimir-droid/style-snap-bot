@@ -27,7 +27,9 @@ def get_user(user_id: str):
             "style_preference": None,
             "total_free_requests": 0,
             "is_premium": False,
-            "premium_until": None
+            "premium_until": None,
+            "bonus_requests": 0,
+            "referrer": None
         }).execute()
         return {
             "user_id": user_id,
@@ -37,23 +39,40 @@ def get_user(user_id: str):
             "style_preference": None,
             "total_free_requests": 0,
             "is_premium": False,
-            "premium_until": None
+            "premium_until": None,
+            "bonus_requests": 0,
+            "referrer": None
         }
 
 def update_user(user_id: str, data: dict):
     supabase.table("users").update(data).eq("user_id", user_id).execute()
 
 def can_request(user_id: str) -> bool:
+    """Проверяет, может ли пользователь сделать бесплатный запрос:
+       - если премиум – всегда может
+       - иначе: (3 - total_free_requests) + bonus_requests > 0
+    """
     user = get_user(user_id)
     if user.get("is_premium"):
         return True
-    used = user.get("total_free_requests", 0)
-    return used < 3
+    remaining_free = 3 - user.get("total_free_requests", 0)
+    remaining_bonus = user.get("bonus_requests", 0)
+    return (remaining_free + remaining_bonus) > 0
 
 def increment_free_requests(user_id: str):
+    """
+    Увеличивает счётчик использованных бесплатных запросов (сначала списывает бонусы, потом бесплатные)
+    """
     user = get_user(user_id)
-    new_count = user.get("total_free_requests", 0) + 1
-    update_user(user_id, {"total_free_requests": new_count})
+    if user.get("is_premium"):
+        return
+    bonus = user.get("bonus_requests", 0)
+    if bonus > 0:
+        # списываем бонус
+        update_user(user_id, {"bonus_requests": bonus - 1})
+    else:
+        new_count = user.get("total_free_requests", 0) + 1
+        update_user(user_id, {"total_free_requests": new_count})
 
 def is_premium(user_id: str) -> bool:
     user = get_user(user_id)
@@ -75,12 +94,26 @@ def set_premium(user_id: str, duration_days: int = 30):
 
 def set_user_info(user_id: str, gender: str = None, style: str = None):
     data = {}
-    if gender is not None:
+    if gender:
         data["gender"] = gender
-    if style is not None:
+    if style:
         data["style_preference"] = style
     if data:
         update_user(user_id, data)
+
+def add_bonus_requests(user_id: str, amount: int = 1):
+    """Добавляет бонусные запросы пользователю"""
+    user = get_user(user_id)
+    new_bonus = user.get("bonus_requests", 0) + amount
+    update_user(user_id, {"bonus_requests": new_bonus})
+
+def set_referrer(user_id: str, referrer_id: str):
+    """Сохраняет, кто пригласил пользователя"""
+    user = get_user(user_id)
+    if user.get("referrer") is None:
+        update_user(user_id, {"referrer": referrer_id})
+        # начисляем бонус пригласившему
+        add_bonus_requests(referrer_id, amount=1)
 
 # ---- Избранное ----
 def add_favorite(user_id: str, result_text: str):
