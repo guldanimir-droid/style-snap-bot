@@ -81,6 +81,7 @@ class GigaChatClientWrapper:
 
     async def generate_text(self, prompt: str, system_prompt: str = None) -> str:
         token = await self._get_token()
+
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
