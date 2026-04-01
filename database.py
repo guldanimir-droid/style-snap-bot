@@ -1,5 +1,5 @@
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -79,13 +79,15 @@ def is_premium(user_id: str) -> bool:
         return False
     premium_until = user.get("premium_until")
     if premium_until:
-        if datetime.fromisoformat(premium_until.replace('Z', '+00:00')) < datetime.now().astimezone():
+        # Приводим к UTC
+        premium_until_dt = datetime.fromisoformat(premium_until.replace('Z', '+00:00'))
+        if premium_until_dt < datetime.now(timezone.utc):
             update_user(user_id, {"is_premium": False, "premium_until": None})
             return False
     return True
 
 def set_premium(user_id: str, duration_days: int = 30):
-    premium_until = datetime.now() + timedelta(days=duration_days)
+    premium_until = datetime.now(timezone.utc) + timedelta(days=duration_days)
     update_user(user_id, {
         "is_premium": True,
         "premium_until": premium_until.isoformat()
@@ -118,15 +120,12 @@ def apply_referral(new_user_id: str, referrer_code: str):
     if referrer_id == new_user_id:
         return False
 
-    # Проверяем, не был ли уже приглашён
     new_user = get_user(new_user_id)
     if new_user.get("referred_by"):
         return False
 
-    # Сохраняем, кто пригласил
     update_user(new_user_id, {"referred_by": referrer_id})
 
-    # Начисляем бонусы
     referrer = get_user(referrer_id)
     new_bonus_ref = referrer.get("bonus_requests", 0) + 1
     update_user(referrer_id, {"bonus_requests": new_bonus_ref})
@@ -147,5 +146,6 @@ def get_favorites(user_id: str):
     response = supabase.table("favorites").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
     return response.data
 
-def delete_favorite(favorite_id: int):
-    supabase.table("favorites").delete().eq("id", favorite_id).execute()
+def delete_favorite(user_id: str, favorite_id: int):
+    """Удаляет избранное только если оно принадлежит пользователю"""
+    supabase.table("favorites").delete().eq("id", favorite_id).eq("user_id", user_id).execute()
