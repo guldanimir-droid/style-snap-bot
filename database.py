@@ -34,7 +34,8 @@ def get_user(user_id: str):
             "premium_until": None,
             "referral_code": referral_code,
             "referred_by": None,
-            "bonus_requests": 0
+            "bonus_requests": 0,
+            "welcome_bonus_granted": False
         }).execute()
         return {
             "user_id": user_id,
@@ -47,7 +48,8 @@ def get_user(user_id: str):
             "premium_until": None,
             "referral_code": referral_code,
             "referred_by": None,
-            "bonus_requests": 0
+            "bonus_requests": 0,
+            "welcome_bonus_granted": False
         }
 
 def update_user(user_id: str, data: dict):
@@ -62,7 +64,6 @@ def can_request(user_id: str) -> bool:
     return used < 3 + bonus
 
 def use_request(user_id: str):
-    """Списывает один запрос: сначала бонус, потом бесплатный."""
     user = get_user(user_id)
     if user.get("is_premium"):
         return
@@ -79,7 +80,6 @@ def is_premium(user_id: str) -> bool:
         return False
     premium_until = user.get("premium_until")
     if premium_until:
-        # Приводим к UTC
         premium_until_dt = datetime.fromisoformat(premium_until.replace('Z', '+00:00'))
         if premium_until_dt < datetime.now(timezone.utc):
             update_user(user_id, {"is_premium": False, "premium_until": None})
@@ -112,7 +112,6 @@ def get_referral_link(user_id: str) -> str:
     return f"https://t.me/stil_snap_ai_bot?start={code}"
 
 def apply_referral(new_user_id: str, referrer_code: str):
-    """Начисляет бонусы пригласившему и приглашённому"""
     resp = supabase.table("users").select("user_id").eq("referral_code", referrer_code).execute()
     if not resp.data:
         return False
@@ -147,5 +146,20 @@ def get_favorites(user_id: str):
     return response.data
 
 def delete_favorite(user_id: str, favorite_id: int):
-    """Удаляет избранное только если оно принадлежит пользователю"""
     supabase.table("favorites").delete().eq("id", favorite_id).eq("user_id", user_id).execute()
+
+# ---- Гардероб ----
+def add_to_wardrobe(user_id: str, image_url: str, clothing_type: str, description: str):
+    supabase.table("wardrobe").insert({
+        "user_id": user_id,
+        "image_url": image_url,
+        "clothing_type": clothing_type,
+        "description": description
+    }).execute()
+
+def get_wardrobe(user_id: str):
+    response = supabase.table("wardrobe").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
+    return response.data
+
+def delete_from_wardrobe(item_id: int, user_id: str):
+    supabase.table("wardrobe").delete().eq("id", item_id).eq("user_id", user_id).execute()
