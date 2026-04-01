@@ -3,7 +3,7 @@ import logging
 import aiohttp
 import json
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery, CommandObject
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
@@ -25,7 +25,7 @@ from prompts import SYSTEM_PROMPT
 from affiliate import generate_affiliate_links
 import database
 import image_utils
-from cache import last_results_cache  # импортируем кэш
+from cache import last_results_cache
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -75,18 +75,15 @@ def get_result_keyboard():
 @dp.message(CommandStart(deep_link=True))
 async def cmd_start_with_ref(message: Message, command: CommandObject):
     user_id = str(message.from_user.id)
-    # Извлечение реферального кода
     if command.args:
         ref_code = command.args
         database.apply_referral(user_id, ref_code)
-    # Дальше обычный старт
     await cmd_start(message)
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = str(message.from_user.id)
     logger.info(f"Start command from user {user_id}")
-    # Очищаем кэш для этого пользователя, если есть
     if user_id in last_results_cache:
         del last_results_cache[user_id]
     try:
@@ -356,7 +353,6 @@ async def handle_photo(message: Message):
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         result_with_links = generate_affiliate_links(result)
 
-        # Сохраняем результат в кэш
         last_results_cache[user_id] = result_with_links
 
         await message.reply(
