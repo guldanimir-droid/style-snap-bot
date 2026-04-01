@@ -4,6 +4,7 @@ import json
 import logging
 import asyncio
 import uuid
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +16,11 @@ class GigaChatClientWrapper:
         self.token_expiry = 0
         self.token_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
         self.api_url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
+        self.timeout = aiohttp.ClientTimeout(total=30)  # таймаут 30 секунд
 
     async def _get_token(self):
-        if self.access_token and asyncio.get_event_loop().time() < self.token_expiry:
+        now = time.monotonic()
+        if self.access_token and now < self.token_expiry:
             return self.access_token
 
         rq_uid = str(uuid.uuid4())
@@ -32,8 +35,8 @@ class GigaChatClientWrapper:
             "Content-Type": "application/x-www-form-urlencoded"
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self.token_url, data=payload, headers=headers, ssl=False) as resp:
+        async with aiohttp.ClientSession(timeout=self.timeout) as session:
+            async with session.post(self.token_url, data=payload, headers=headers) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"Token request failed: status={resp.status}, body={error_text}")
@@ -41,7 +44,7 @@ class GigaChatClientWrapper:
                 data = await resp.json()
                 self.access_token = data["access_token"]
                 expires_in = data.get("expires_in", 1800)
-                self.token_expiry = asyncio.get_event_loop().time() + expires_in - 60
+                self.token_expiry = now + expires_in - 60
                 return self.access_token
 
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
@@ -67,8 +70,8 @@ class GigaChatClientWrapper:
             "Accept": "application/json"
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self.api_url, json=payload, headers=headers, ssl=False) as resp:
+        async with aiohttp.ClientSession(timeout=self.timeout) as session:
+            async with session.post(self.api_url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"GigaChat API error {resp.status}: {error_text}")
@@ -100,8 +103,8 @@ class GigaChatClientWrapper:
             "Accept": "application/json"
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self.api_url, json=payload, headers=headers, ssl=False) as resp:
+        async with aiohttp.ClientSession(timeout=self.timeout) as session:
+            async with session.post(self.api_url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"GigaChat API error {resp.status}: {error_text}")
