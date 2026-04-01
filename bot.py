@@ -26,6 +26,7 @@ from affiliate import generate_affiliate_links
 import database
 import image_utils
 from cache import last_results_cache
+from states import ProfileStates  # импортируем состояния
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -71,24 +72,41 @@ def get_result_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+# ---- Вспомогательная функция начисления бонуса ----
+async def grant_welcome_bonus(user_id: str):
+    """Начисляет бонус +1 запрос, если пользователь ещё не получал его."""
+    user = database.get_user(user_id)
+    if not user.get("welcome_bonus_granted", False):
+        # Начисляем бонус
+        new_bonus = user.get("bonus_requests", 0) + 1
+        database.update_user(user_id, {
+            "bonus_requests": new_bonus,
+            "welcome_bonus_granted": True
+        })
+        logger.info(f"Welcome bonus granted to user {user_id}")
+
 # ---- Обработчики команд ----
 @dp.message(CommandStart(deep_link=True))
-async def cmd_start_with_ref(message: Message, command: CommandObject):
+async def cmd_start_with_ref(message: Message, command: CommandObject, state: FSMContext):
     user_id = str(message.from_user.id)
     if command.args:
         ref_code = command.args
         database.apply_referral(user_id, ref_code)
-    await cmd_start(message)
+    await cmd_start(message, state)
 
 @dp.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     logger.info(f"Start command from user {user_id}")
+    # Очищаем кэш для этого пользователя, если есть
     if user_id in last_results_cache:
         del last_results_cache[user_id]
     try:
         user = database.get_user(user_id)
+        # Проверяем, заполнен ли профиль
         if not user.get("gender") or not user.get("style_preference"):
+            # Переходим в состояние выбора пола
+            await state.set_state(ProfileStates.waiting_gender)
             await message.answer(
                 "🌟 <b>Привет! Я твой персональный AI-стилист!</b>\n\n"
                 "Чтобы давать максимально точные советы, давай познакомимся поближе.\n"
@@ -111,6 +129,79 @@ async def cmd_start(message: Message):
         logger.exception(f"Error in start handler: {e}")
         await message.answer("❌ Произошла внутренняя ошибка. Попробуй позже.")
 
+# ---- Обработчики FSM (опрос) ----
+@dp.message(ProfileStates.waiting_gender, F.text.in_(["👩 Девушка", "👨 Парень"]))
+async def process_gender(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    gender = message.text.split()[1]  # "Девушка" или "Парень"
+    database.set_user_info(user_id, gender=gender)
+    # Переходим к выбору стиля
+    await state.set_state(ProfileStates.waiting_style)
+    await message.answer(
+        "Отлично! А какой стиль тебе ближе?",
+        reply_markup=get_style_keyboard()
+    )
+
+@dp.message(ProfileStates.waiting_gender, F.text == "⏩ Пропустить")
+async def skip_gender(message: Message, state: FSMContext):
+    await state.set_state(ProfileStates.waiting_style)
+    await message.answer(
+        "Хорошо, пропустим этот вопрос. А какой стиль тебе ближе?",
+        reply_markup=get_style_keyboard()
+    )
+
+@dp.message(ProfileStates.waiting_style, F.text.in_(["👕 Повседневный", "💼 Деловой", "🌸 Романтичный", "⚽ Спортивный"]))
+async def process_style(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    style = message.text.split()[1]  # "Повседневный" и т.д.
+    database.set_user_info(user_id, style=style)
+    # Начисляем приветственный бонус
+    await grant_welcome_bonus(user_id)
+    # Завершаем FSM
+    await state.clear()
+    await message.answer(
+        "Спасибо! Теперь отправь мне фото, и я проанализирую образ.\n\n"
+        "Также ты можешь просто задать текстовый вопрос – я помогу!\n\n"
+        "🎁 <b>В подарок ты получил +1 бесплатный анализ!</b>",
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard()
+    )
+
+@dp.message(ProfileStates.waiting_style, F.text == "⏩ Пропустить")
+async def skip_style(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    # Начисляем бонус даже если стиль не выбран
+    await grant_welcome_bonus(user_id)
+    await state.clear()
+    await message.answer(
+        "Хорошо, если захочешь заполнить позже — просто нажми /profile.\n\n"
+        "А пока отправь фото или задай вопрос!\n\n"
+        "🎁 <b>В подарок ты получил +1 бесплатный анализ!</b>",
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard()
+    )
+
+# ---- Обработчик для любых других сообщений во время опроса ----
+@dp.message(ProfileStates.waiting_gender)
+async def invalid_gender_input(message: Message):
+    await message.answer(
+        "Пожалуйста, выбери свой пол с помощью кнопок ниже 👇",
+        reply_markup=get_gender_keyboard()
+    )
+
+@dp.message(ProfileStates.waiting_style)
+async def invalid_style_input(message: Message):
+    await message.answer(
+        "Пожалуйста, выбери предпочитаемый стиль с помощью кнопок ниже 👇",
+        reply_markup=get_style_keyboard()
+    )
+
+# ---- Остальные обработчики (команды, фото, текст и т.д.) остаются без изменений ----
+# ... (здесь вставляем весь остальной код из предыдущей версии bot.py, начиная с команд profile, premium, referral и т.д.)
+# ВНИМАНИЕ: Ниже нужно вставить весь код, который был после этого места. 
+# Чтобы не дублировать, я приведу оставшуюся часть ниже, но вы должны скопировать её из предыдущего bot.py и вставить сюда.
+
+# ---- Обработчики команд (profile, premium, referral, help, favorites) ----
 @dp.message(Command("profile"))
 async def cmd_profile(message: Message):
     user_id = str(message.from_user.id)
@@ -207,7 +298,7 @@ async def cmd_favorites(message: Message):
         text += f"{idx}. {fav['result_text'][:100]}...\n"
     await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
-# ---- Обработчики кнопок главного меню ----
+# ---- Обработчики кнопок главного меню (без изменений) ----
 @dp.message(F.text == "📸 Анализировать")
 async def main_analyze(message: Message):
     await message.answer(
@@ -272,41 +363,17 @@ async def ask_stylist(message: Message):
 async def main_help(message: Message):
     await cmd_help(message)
 
-# ---- Обработчики выбора пола и стиля (при первом опросе) ----
-@dp.message(F.text.in_(["👩 Девушка", "👨 Парень"]))
-async def set_gender(message: Message):
-    user_id = str(message.from_user.id)
-    gender = message.text.split()[1]
-    database.set_user_info(user_id, gender=gender)
-    await message.answer(
-        "Отлично! А какой стиль тебе ближе?",
-        reply_markup=get_style_keyboard()
-    )
-
-@dp.message(F.text.in_(["👕 Повседневный", "💼 Деловой", "🌸 Романтичный", "⚽ Спортивный"]))
-async def set_style(message: Message):
-    user_id = str(message.from_user.id)
-    style = message.text.split()[1]
-    database.set_user_info(user_id, style=style)
-    await message.answer(
-        "Спасибо! Теперь отправь мне фото, и я проанализирую образ.\n\n"
-        "Также ты можешь просто задать текстовый вопрос – я помогу!",
-        reply_markup=get_main_keyboard()
-    )
-
-@dp.message(F.text == "⏩ Пропустить")
-async def skip_info(message: Message):
-    user_id = str(message.from_user.id)
-    await message.answer(
-        "Хорошо, если захочешь заполнить позже — просто напиши /start. А пока отправь фото или задай вопрос!",
-        reply_markup=get_main_keyboard()
-    )
-
 # ---- Обработчик фото ----
 @dp.message(F.photo)
-async def handle_photo(message: Message):
+async def handle_photo(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     logger.info(f"Photo handler called for user {user_id}")
+
+    # Если пользователь находится в состоянии опроса, прерываем FSM
+    current_state = await state.get_state()
+    if current_state is not None:
+        await state.clear()
+        await message.answer("Ок, продолжим с анализа фото. Но сначала заполни свой профиль позже через /profile.")
 
     photo = message.photo[-1]
     if photo.file_size > 5 * 1024 * 1024:
@@ -371,12 +438,18 @@ async def handle_photo(message: Message):
             reply_markup=get_main_keyboard()
         )
 
-# ---- Обработчик текстовых вопросов (GigaChat) ----
+# ---- Обработчик текстовых вопросов ----
 @dp.message(F.text)
-async def handle_text(message: Message):
+async def handle_text(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
     if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь"]:
+        return
+
+    # Если пользователь в процессе опроса, игнорируем текстовые запросы
+    current_state = await state.get_state()
+    if current_state is not None:
+        await message.answer("Пожалуйста, сначала завершите настройку профиля с помощью кнопок.")
         return
 
     user_id = str(message.from_user.id)
