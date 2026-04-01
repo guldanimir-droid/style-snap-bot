@@ -4,5 +4,5 @@ class ProfileStates(StatesGroup):
     waiting_gender = State()
     waiting_style = State()
 
-class FavoritesStates(StatesGroup):
-    browsing = State()
+class WardrobeStates(StatesGroup):
+    waiting_for_photo = State()   # ожидаем фото для добавления в гардероб
