@@ -25,6 +25,7 @@ from prompts import SYSTEM_PROMPT
 from affiliate import generate_affiliate_links
 import database
 import image_utils
+from cache import last_results_cache  # импортируем кэш
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -37,8 +38,6 @@ gemini = GigaChatClientWrapper(
     client_id=GIGACHAT_CLIENT_ID,
     client_secret=GIGACHAT_SECRET
 )
-
-last_results = {}
 
 # ---- Клавиатуры ----
 def get_gender_keyboard():
@@ -73,14 +72,12 @@ def get_result_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ---- Обработчики команд ----
-@dp.message(CommandStart(deep_link=True, deep_link_encoded=False))
-async def cmd_start_with_ref(message: Message):
+@dp.message(CommandStart(deep_link=True))
+async def cmd_start_with_ref(message: Message, command: CommandObject):
+    user_id = str(message.from_user.id)
     # Извлечение реферального кода
-    args = message.text.split()
-    if len(args) > 1:
-        ref_code = args[1]
-        user_id = str(message.from_user.id)
-        # Применяем реферал
+    if command.args:
+        ref_code = command.args
         database.apply_referral(user_id, ref_code)
     # Дальше обычный старт
     await cmd_start(message)
@@ -89,8 +86,9 @@ async def cmd_start_with_ref(message: Message):
 async def cmd_start(message: Message):
     user_id = str(message.from_user.id)
     logger.info(f"Start command from user {user_id}")
-    if user_id in last_results:
-        del last_results[user_id]
+    # Очищаем кэш для этого пользователя, если есть
+    if user_id in last_results_cache:
+        del last_results_cache[user_id]
     try:
         user = database.get_user(user_id)
         if not user.get("gender") or not user.get("style_preference"):
@@ -358,7 +356,8 @@ async def handle_photo(message: Message):
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         result_with_links = generate_affiliate_links(result)
 
-        last_results[user_id] = result_with_links
+        # Сохраняем результат в кэш
+        last_results_cache[user_id] = result_with_links
 
         await message.reply(
             result_with_links,
@@ -367,7 +366,7 @@ async def handle_photo(message: Message):
         )
 
         if user_id != DEVELOPER_ID and not database.is_premium(user_id):
-            database.use_request(user_id)  # списываем запрос
+            database.use_request(user_id)
 
     except Exception as e:
         logger.exception("Ошибка обработки фото: %s", e)
@@ -504,7 +503,7 @@ async def more_advice_callback(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data == "share_result")
 async def share_result_callback(callback: CallbackQuery):
     user_id = str(callback.from_user.id)
-    result = last_results.get(user_id)
+    result = last_results_cache.get(user_id)
     if not result:
         await callback.answer("Не найден результат анализа. Отправьте новое фото.", show_alert=True)
         return
@@ -523,7 +522,7 @@ async def share_result_callback(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data == "save_favorite")
 async def save_favorite_callback(callback: CallbackQuery):
     user_id = str(callback.from_user.id)
-    result = last_results.get(user_id)
+    result = last_results_cache.get(user_id)
     if not result:
         await callback.answer("Не найден результат анализа. Отправьте новое фото.", show_alert=True)
         return
