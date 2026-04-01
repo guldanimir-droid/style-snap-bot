@@ -5,4 +5,4 @@ class ProfileStates(StatesGroup):
     waiting_style = State()
 
 class FavoritesStates(StatesGroup):
-    browsing = State()   # навигация по избранному
+    browsing = State()
