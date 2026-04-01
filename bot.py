@@ -78,8 +78,10 @@ def get_wardrobe_keyboard(items):
     """Создаёт инлайн-клавиатуру для списка вещей с кнопками удаления"""
     buttons = []
     for item in items:
-        short_desc = item['description'][:30] + "..." if len(item['description']) > 30 else item['description']
-        text = f"❌ {item['clothing_type']}: {short_desc}"
+        clothing_type = item.get('clothing_type', 'неизвестно')
+        description = item.get('description', 'без описания')
+        short_desc = description[:30] + "..." if len(description) > 30 else description
+        text = f"❌ {clothing_type}: {short_desc}"
         buttons.append([InlineKeyboardButton(text=text, callback_data=f"wardrobe_del_{item['id']}")])
     # Кнопка добавить новую вещь
     buttons.append([InlineKeyboardButton(text="➕ Добавить вещь", callback_data="wardrobe_add")])
@@ -439,7 +441,9 @@ async def wardrobe_menu(message: Message):
     else:
         text = "🧥 <b>Твой гардероб:</b>\n\n"
         for item in items:
-            text += f"• {item['clothing_type']}: {item['description']}\n"
+            clothing_type = item.get('clothing_type', 'неизвестно')
+            description = item.get('description', 'без описания')
+            text += f"• {clothing_type}: {description}\n"
         await message.answer(text, parse_mode="HTML", reply_markup=get_wardrobe_keyboard(items))
 
 @dp.message(F.text == "❓ Помощь")
@@ -468,7 +472,9 @@ async def wardrobe_delete_callback(callback: CallbackQuery):
     else:
         text = "🧥 <b>Твой гардероб:</b>\n\n"
         for item in items:
-            text += f"• {item['clothing_type']}: {item['description']}\n"
+            clothing_type = item.get('clothing_type', 'неизвестно')
+            description = item.get('description', 'без описания')
+            text += f"• {clothing_type}: {description}\n"
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_wardrobe_keyboard(items))
     await callback.answer("Вещь удалена!")
 
@@ -481,7 +487,7 @@ async def wardrobe_suggest_callback(callback: CallbackQuery):
         return
 
     # Формируем запрос к GigaChat
-    wardrobe_text = "\n".join([f"- {item['clothing_type']}: {item['description']}" for item in items])
+    wardrobe_text = "\n".join([f"- {item.get('clothing_type', 'неизвестно')}: {item.get('description', 'без описания')}" for item in items])
     prompt = (
         f"Ты — стилист. У пользователя есть следующие вещи:\n{wardrobe_text}\n\n"
         f"Предложи 2-3 варианта комбинаций из этих вещей, которые составят стильный образ. "
