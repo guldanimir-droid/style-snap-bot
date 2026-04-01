@@ -25,8 +25,9 @@ from prompts import SYSTEM_PROMPT
 from affiliate import generate_affiliate_links
 import database
 import image_utils
+import clothing_recognition
 from cache import last_results_cache
-from states import ProfileStates
+from states import ProfileStates, WardrobeStates
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -60,7 +61,8 @@ def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="💎 Премиум"), KeyboardButton(text="🔗 Рефералка")],
-        [KeyboardButton(text="💬 Спросить стилиста"), KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="💬 Спросить стилиста"), KeyboardButton(text="🧥 Гардероб")],
+        [KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -70,6 +72,21 @@ def get_result_keyboard():
         [InlineKeyboardButton(text="📤 Поделиться", callback_data="share_result")],
         [InlineKeyboardButton(text="⭐ В избранное", callback_data="save_favorite")]
     ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_wardrobe_keyboard(items):
+    """Создаёт инлайн-клавиатуру для списка вещей с кнопками удаления"""
+    buttons = []
+    for item in items:
+        short_desc = item['description'][:30] + "..." if len(item['description']) > 30 else item['description']
+        text = f"❌ {item['clothing_type']}: {short_desc}"
+        buttons.append([InlineKeyboardButton(text=text, callback_data=f"wardrobe_del_{item['id']}")])
+    # Кнопка добавить новую вещь
+    buttons.append([InlineKeyboardButton(text="➕ Добавить вещь", callback_data="wardrobe_add")])
+    # Кнопка подобрать образ
+    buttons.append([InlineKeyboardButton(text="👕 Подобрать образ из гардероба", callback_data="wardrobe_suggest")])
+    # Кнопка закрыть
+    buttons.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="wardrobe_close")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ---- Вспомогательная функция начисления бонуса ----
@@ -251,19 +268,19 @@ async def cmd_help(message: Message):
         "2️⃣ Напиши вопрос стилисту – получи текстовую консультацию\n"
         "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
         "4️⃣ Оплати подписку, чтобы снять лимиты\n"
-        "5️⃣ Приглашай друзей по реферальной ссылке – получай бонусные анализы\n\n"
+        "5️⃣ Приглашай друзей по реферальной ссылке – получай бонусные анализы\n"
+        "6️⃣ Добавляй вещи в гардероб – получай подборки образов\n\n"
         "<b>Команды:</b>\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
         "/premium — информация о подписке\n"
         "/referral — реферальная ссылка\n"
         "/favorites — показать сохранённые образы\n"
+        "/wardrobe — мой гардероб\n"
         "/help — эта справка\n\n"
         "🔜 <b>Скоро в боте:</b>\n"
         "• Интеграция с магазинами\n"
-        "• Виртуальная примерка\n"
-        "• Личный гардероб\n"
-        "• Сборка образов по фото",
+        "• Виртуальная примерка",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
@@ -278,14 +295,9 @@ async def cmd_favorites(message: Message):
             reply_markup=get_main_keyboard()
         )
         return
-    # Сохраняем в состоянии текущую страницу и список
-    # Используем FSM для хранения пагинации (простой подход)
-    # Но мы можем хранить в кэше или просто передавать параметры в callback
-    # Создадим временное состояние для пагинации
     await show_favorites_page(message, favorites, page=0)
 
 async def show_favorites_page(message: Message, favorites: list, page: int):
-    """Показывает страницу избранного с инлайн-кнопками удаления и навигации"""
     items_per_page = 5
     total_pages = (len(favorites) + items_per_page - 1) // items_per_page
     if page >= total_pages:
@@ -297,20 +309,14 @@ async def show_favorites_page(message: Message, favorites: list, page: int):
     end = start + items_per_page
     page_favorites = favorites[start:end]
 
-    # Формируем текст
     text = f"⭐ <b>Сохранённые образы</b> (страница {page+1}/{total_pages if total_pages>0 else 1}):\n\n"
     for idx, fav in enumerate(page_favorites, start=start+1):
-        # Обрезаем текст до 80 символов
         short_text = fav['result_text'][:80] + "..." if len(fav['result_text']) > 80 else fav['result_text']
         text += f"{idx}. {short_text}\n"
 
-    # Создаём кнопки
     buttons = []
-    # Кнопки для каждого элемента
     for fav in page_favorites:
-        # Кнопка удаления с callback_data, содержащим id записи
         buttons.append([InlineKeyboardButton(text=f"❌ Удалить запись #{fav['id']}", callback_data=f"delete_fav_{fav['id']}")])
-    # Кнопки навигации
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"fav_page_{page-1}"))
@@ -318,17 +324,15 @@ async def show_favorites_page(message: Message, favorites: list, page: int):
         nav_buttons.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"fav_page_{page+1}"))
     if nav_buttons:
         buttons.append(nav_buttons)
-    # Кнопка закрытия
     buttons.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="close_favorites")])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    # Если сообщение уже существует, редактируем, иначе отправляем новое
     if hasattr(message, 'edit_text'):
         await message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
     else:
         await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
-# Обработчики callback для избранного
+# ---- Обработчики избранного ----
 @dp.callback_query(lambda c: c.data.startswith("fav_page_"))
 async def favorites_page_callback(callback: CallbackQuery):
     page = int(callback.data.split("_")[2])
@@ -346,13 +350,11 @@ async def delete_favorite_callback(callback: CallbackQuery):
     fav_id = int(callback.data.split("_")[2])
     user_id = str(callback.from_user.id)
     database.delete_favorite(user_id, fav_id)
-    # Обновляем список избранного и показываем текущую страницу
     favorites = database.get_favorites(user_id)
     if not favorites:
         await callback.message.edit_text("⭐ У тебя пока нет сохранённых образов.", reply_markup=None)
         await callback.answer("Запись удалена!")
         return
-    # Определяем текущую страницу (можно извлечь из текста сообщения, но проще показать первую)
     await show_favorites_page(callback.message, favorites, page=0)
     await callback.answer("Запись удалена!")
 
@@ -422,17 +424,138 @@ async def ask_stylist(message: Message):
         reply_markup=ReplyKeyboardRemove()
     )
 
+@dp.message(F.text == "🧥 Гардероб")
+async def wardrobe_menu(message: Message):
+    user_id = str(message.from_user.id)
+    items = database.get_wardrobe(user_id)
+    if not items:
+        await message.answer(
+            "🧥 <b>Твой гардероб пока пуст</b>\n\n"
+            "Чтобы добавить вещь, отправь её фото и я распознаю тип одежды.\n\n"
+            "Или нажми кнопку «➕ Добавить вещь» ниже.",
+            parse_mode="HTML",
+            reply_markup=get_wardrobe_keyboard([])
+        )
+    else:
+        text = "🧥 <b>Твой гардероб:</b>\n\n"
+        for item in items:
+            text += f"• {item['clothing_type']}: {item['description']}\n"
+        await message.answer(text, parse_mode="HTML", reply_markup=get_wardrobe_keyboard(items))
+
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
     await cmd_help(message)
 
-# ---- Обработчик фото ----
+# ---- Обработчики гардероба ----
+@dp.callback_query(lambda c: c.data == "wardrobe_add")
+async def wardrobe_add_callback(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(WardrobeStates.waiting_for_photo)
+    await callback.message.answer(
+        "📸 Отправь фото предмета одежды, который хочешь добавить в гардероб.\n"
+        "Я распознаю тип и описание."
+    )
+    await callback.answer()
+    await callback.message.delete()
+
+@dp.callback_query(lambda c: c.data.startswith("wardrobe_del_"))
+async def wardrobe_delete_callback(callback: CallbackQuery):
+    item_id = int(callback.data.split("_")[2])
+    user_id = str(callback.from_user.id)
+    database.delete_from_wardrobe(item_id, user_id)
+    items = database.get_wardrobe(user_id)
+    if not items:
+        text = "🧥 <b>Твой гардероб пока пуст</b>\n\nЧтобы добавить вещь, отправь её фото."
+    else:
+        text = "🧥 <b>Твой гардероб:</b>\n\n"
+        for item in items:
+            text += f"• {item['clothing_type']}: {item['description']}\n"
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_wardrobe_keyboard(items))
+    await callback.answer("Вещь удалена!")
+
+@dp.callback_query(lambda c: c.data == "wardrobe_suggest")
+async def wardrobe_suggest_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    items = database.get_wardrobe(user_id)
+    if len(items) < 2:
+        await callback.answer("Для подбора образа нужно хотя бы 2 вещи в гардеробе!", show_alert=True)
+        return
+
+    # Формируем запрос к GigaChat
+    wardrobe_text = "\n".join([f"- {item['clothing_type']}: {item['description']}" for item in items])
+    prompt = (
+        f"Ты — стилист. У пользователя есть следующие вещи:\n{wardrobe_text}\n\n"
+        f"Предложи 2-3 варианта комбинаций из этих вещей, которые составят стильный образ. "
+        f"Учитывай, что у пользователя пол: {database.get_user(user_id).get('gender', 'не указан')}, "
+        f"предпочтения в стиле: {database.get_user(user_id).get('style_preference', 'не указан')}. "
+        f"Ответ должен быть на русском, дружелюбным, с конкретными советами."
+    )
+
+    await callback.message.answer("🧠 Думаю над образами...")
+    try:
+        result = await gemini.generate_text(prompt)
+        await callback.message.answer(result, parse_mode="HTML")
+    except Exception as e:
+        logger.exception("Ошибка подбора образа")
+        await callback.message.answer("❌ Не удалось подобрать образ. Попробуйте позже.")
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "wardrobe_close")
+async def wardrobe_close_callback(callback: CallbackQuery):
+    await callback.message.delete()
+    await callback.answer()
+
+# ---- Обработчик добавления вещи (FSM) ----
+@dp.message(WardrobeStates.waiting_for_photo, F.photo)
+async def wardrobe_add_photo(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    photo = message.photo[-1]
+
+    if photo.file_size > 5 * 1024 * 1024:
+        await message.reply("⚠️ Фото слишком большое (до 5 МБ).")
+        return
+
+    # Скачиваем фото
+    file = await bot.get_file(photo.file_id)
+    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(file_url) as resp:
+            if resp.status != 200:
+                await message.reply("❌ Не удалось загрузить фото.")
+                return
+            image_bytes = await resp.read()
+
+    # Распознаём
+    await message.reply("🔍 Распознаю предмет...")
+    clothing_type, description = await clothing_recognition.recognize_clothing(image_bytes, gemini)
+
+    # Сохраняем в базу (image_url можно сохранить ссылку на telegram-файл)
+    database.add_to_wardrobe(user_id, file_url, clothing_type, description)
+
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Вещь добавлена в гардероб!</b>\n\n"
+        f"Тип: {clothing_type}\nОписание: {description}\n\n"
+        f"Можешь добавить ещё или посмотреть гардероб по кнопке «Гардероб».",
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard()
+    )
+
+@dp.message(WardrobeStates.waiting_for_photo)
+async def wardrobe_add_invalid(message: Message):
+    await message.answer("Пожалуйста, отправьте фото одежды.")
+
+# ---- Обработчик фото (основной) ----
 @dp.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
+    # Если пользователь в режиме добавления в гардероб, обрабатываем в специальном хендлере
+    current_state = await state.get_state()
+    if current_state == WardrobeStates.waiting_for_photo.state:
+        return
+
     user_id = str(message.from_user.id)
     logger.info(f"Photo handler called for user {user_id}")
 
-    current_state = await state.get_state()
+    # Если пользователь в опросе профиля, сбрасываем
     if current_state is not None:
         await state.clear()
         await message.answer("Ок, продолжим с анализа фото. Но сначала заполни свой профиль позже через /profile.")
@@ -505,12 +628,12 @@ async def handle_photo(message: Message, state: FSMContext):
 async def handle_text(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "🔗 Рефералка", "💬 Спросить стилиста", "🧥 Гардероб", "❓ Помощь"]:
         return
 
     current_state = await state.get_state()
     if current_state is not None:
-        await message.answer("Пожалуйста, сначала завершите настройку профиля с помощью кнопок.")
+        await message.answer("Пожалуйста, сначала завершите текущее действие с помощью кнопок.")
         return
 
     user_id = str(message.from_user.id)
@@ -684,6 +807,11 @@ async def process_payment(message: Message):
             "Неизвестный тип оплаты. Обратитесь к разработчику.",
             reply_markup=get_main_keyboard()
         )
+
+# ---- Команда /wardrobe ----
+@dp.message(Command("wardrobe"))
+async def cmd_wardrobe(message: Message):
+    await wardrobe_menu(message)
 
 # ---- Запуск ----
 async def main():
