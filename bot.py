@@ -26,7 +26,7 @@ from affiliate import generate_affiliate_links
 import database
 import image_utils
 from cache import last_results_cache
-from states import ProfileStates  # импортируем состояния
+from states import ProfileStates
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -74,10 +74,8 @@ def get_result_keyboard():
 
 # ---- Вспомогательная функция начисления бонуса ----
 async def grant_welcome_bonus(user_id: str):
-    """Начисляет бонус +1 запрос, если пользователь ещё не получал его."""
     user = database.get_user(user_id)
     if not user.get("welcome_bonus_granted", False):
-        # Начисляем бонус
         new_bonus = user.get("bonus_requests", 0) + 1
         database.update_user(user_id, {
             "bonus_requests": new_bonus,
@@ -98,14 +96,11 @@ async def cmd_start_with_ref(message: Message, command: CommandObject, state: FS
 async def cmd_start(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     logger.info(f"Start command from user {user_id}")
-    # Очищаем кэш для этого пользователя, если есть
     if user_id in last_results_cache:
         del last_results_cache[user_id]
     try:
         user = database.get_user(user_id)
-        # Проверяем, заполнен ли профиль
         if not user.get("gender") or not user.get("style_preference"):
-            # Переходим в состояние выбора пола
             await state.set_state(ProfileStates.waiting_gender)
             await message.answer(
                 "🌟 <b>Привет! Я твой персональный AI-стилист!</b>\n\n"
@@ -133,9 +128,8 @@ async def cmd_start(message: Message, state: FSMContext):
 @dp.message(ProfileStates.waiting_gender, F.text.in_(["👩 Девушка", "👨 Парень"]))
 async def process_gender(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
-    gender = message.text.split()[1]  # "Девушка" или "Парень"
+    gender = message.text.split()[1]
     database.set_user_info(user_id, gender=gender)
-    # Переходим к выбору стиля
     await state.set_state(ProfileStates.waiting_style)
     await message.answer(
         "Отлично! А какой стиль тебе ближе?",
@@ -153,11 +147,9 @@ async def skip_gender(message: Message, state: FSMContext):
 @dp.message(ProfileStates.waiting_style, F.text.in_(["👕 Повседневный", "💼 Деловой", "🌸 Романтичный", "⚽ Спортивный"]))
 async def process_style(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
-    style = message.text.split()[1]  # "Повседневный" и т.д.
+    style = message.text.split()[1]
     database.set_user_info(user_id, style=style)
-    # Начисляем приветственный бонус
     await grant_welcome_bonus(user_id)
-    # Завершаем FSM
     await state.clear()
     await message.answer(
         "Спасибо! Теперь отправь мне фото, и я проанализирую образ.\n\n"
@@ -170,7 +162,6 @@ async def process_style(message: Message, state: FSMContext):
 @dp.message(ProfileStates.waiting_style, F.text == "⏩ Пропустить")
 async def skip_style(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
-    # Начисляем бонус даже если стиль не выбран
     await grant_welcome_bonus(user_id)
     await state.clear()
     await message.answer(
@@ -181,7 +172,6 @@ async def skip_style(message: Message, state: FSMContext):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Обработчик для любых других сообщений во время опроса ----
 @dp.message(ProfileStates.waiting_gender)
 async def invalid_gender_input(message: Message):
     await message.answer(
@@ -195,11 +185,6 @@ async def invalid_style_input(message: Message):
         "Пожалуйста, выбери предпочитаемый стиль с помощью кнопок ниже 👇",
         reply_markup=get_style_keyboard()
     )
-
-# ---- Остальные обработчики (команды, фото, текст и т.д.) остаются без изменений ----
-# ... (здесь вставляем весь остальной код из предыдущей версии bot.py, начиная с команд profile, premium, referral и т.д.)
-# ВНИМАНИЕ: Ниже нужно вставить весь код, который был после этого места. 
-# Чтобы не дублировать, я приведу оставшуюся часть ниже, но вы должны скопировать её из предыдущего bot.py и вставить сюда.
 
 # ---- Обработчики команд (profile, premium, referral, help, favorites) ----
 @dp.message(Command("profile"))
@@ -293,12 +278,90 @@ async def cmd_favorites(message: Message):
             reply_markup=get_main_keyboard()
         )
         return
-    text = "⭐ <b>Сохранённые образы:</b>\n\n"
-    for idx, fav in enumerate(favorites[:10], 1):
-        text += f"{idx}. {fav['result_text'][:100]}...\n"
-    await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
+    # Сохраняем в состоянии текущую страницу и список
+    # Используем FSM для хранения пагинации (простой подход)
+    # Но мы можем хранить в кэше или просто передавать параметры в callback
+    # Создадим временное состояние для пагинации
+    await show_favorites_page(message, favorites, page=0)
 
-# ---- Обработчики кнопок главного меню (без изменений) ----
+async def show_favorites_page(message: Message, favorites: list, page: int):
+    """Показывает страницу избранного с инлайн-кнопками удаления и навигации"""
+    items_per_page = 5
+    total_pages = (len(favorites) + items_per_page - 1) // items_per_page
+    if page >= total_pages:
+        page = total_pages - 1
+    if page < 0:
+        page = 0
+
+    start = page * items_per_page
+    end = start + items_per_page
+    page_favorites = favorites[start:end]
+
+    # Формируем текст
+    text = f"⭐ <b>Сохранённые образы</b> (страница {page+1}/{total_pages if total_pages>0 else 1}):\n\n"
+    for idx, fav in enumerate(page_favorites, start=start+1):
+        # Обрезаем текст до 80 символов
+        short_text = fav['result_text'][:80] + "..." if len(fav['result_text']) > 80 else fav['result_text']
+        text += f"{idx}. {short_text}\n"
+
+    # Создаём кнопки
+    buttons = []
+    # Кнопки для каждого элемента
+    for fav in page_favorites:
+        # Кнопка удаления с callback_data, содержащим id записи
+        buttons.append([InlineKeyboardButton(text=f"❌ Удалить запись #{fav['id']}", callback_data=f"delete_fav_{fav['id']}")])
+    # Кнопки навигации
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"fav_page_{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"fav_page_{page+1}"))
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    # Кнопка закрытия
+    buttons.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="close_favorites")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    # Если сообщение уже существует, редактируем, иначе отправляем новое
+    if hasattr(message, 'edit_text'):
+        await message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+    else:
+        await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+# Обработчики callback для избранного
+@dp.callback_query(lambda c: c.data.startswith("fav_page_"))
+async def favorites_page_callback(callback: CallbackQuery):
+    page = int(callback.data.split("_")[2])
+    user_id = str(callback.from_user.id)
+    favorites = database.get_favorites(user_id)
+    if not favorites:
+        await callback.message.edit_text("⭐ У тебя пока нет сохранённых образов.", reply_markup=None)
+        await callback.answer()
+        return
+    await show_favorites_page(callback.message, favorites, page)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("delete_fav_"))
+async def delete_favorite_callback(callback: CallbackQuery):
+    fav_id = int(callback.data.split("_")[2])
+    user_id = str(callback.from_user.id)
+    database.delete_favorite(user_id, fav_id)
+    # Обновляем список избранного и показываем текущую страницу
+    favorites = database.get_favorites(user_id)
+    if not favorites:
+        await callback.message.edit_text("⭐ У тебя пока нет сохранённых образов.", reply_markup=None)
+        await callback.answer("Запись удалена!")
+        return
+    # Определяем текущую страницу (можно извлечь из текста сообщения, но проще показать первую)
+    await show_favorites_page(callback.message, favorites, page=0)
+    await callback.answer("Запись удалена!")
+
+@dp.callback_query(lambda c: c.data == "close_favorites")
+async def close_favorites(callback: CallbackQuery):
+    await callback.message.delete()
+    await callback.answer()
+
+# ---- Обработчики кнопок главного меню ----
 @dp.message(F.text == "📸 Анализировать")
 async def main_analyze(message: Message):
     await message.answer(
@@ -369,7 +432,6 @@ async def handle_photo(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     logger.info(f"Photo handler called for user {user_id}")
 
-    # Если пользователь находится в состоянии опроса, прерываем FSM
     current_state = await state.get_state()
     if current_state is not None:
         await state.clear()
@@ -446,7 +508,6 @@ async def handle_text(message: Message, state: FSMContext):
     if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь"]:
         return
 
-    # Если пользователь в процессе опроса, игнорируем текстовые запросы
     current_state = await state.get_state()
     if current_state is not None:
         await message.answer("Пожалуйста, сначала завершите настройку профиля с помощью кнопок.")
