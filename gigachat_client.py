@@ -16,7 +16,11 @@ class GigaChatClientWrapper:
         self.token_expiry = 0
         self.token_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
         self.api_url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
-        self.timeout = aiohttp.ClientTimeout(total=30)  # таймаут 30 секунд
+        self.timeout = aiohttp.ClientTimeout(total=30)
+        # Предупреждение: отключаем проверку SSL, так как сертификаты GigaChat самоподписанные
+        # Для продакшена рекомендуется использовать корректный SSL-контекст, но это требует
+        # установки корневого сертификата в контейнер.
+        self.ssl_context = False
 
     async def _get_token(self):
         now = time.monotonic()
@@ -36,7 +40,7 @@ class GigaChatClientWrapper:
         }
 
         async with aiohttp.ClientSession(timeout=self.timeout) as session:
-            async with session.post(self.token_url, data=payload, headers=headers) as resp:
+            async with session.post(self.token_url, data=payload, headers=headers, ssl=self.ssl_context) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"Token request failed: status={resp.status}, body={error_text}")
@@ -71,7 +75,7 @@ class GigaChatClientWrapper:
         }
 
         async with aiohttp.ClientSession(timeout=self.timeout) as session:
-            async with session.post(self.api_url, json=payload, headers=headers) as resp:
+            async with session.post(self.api_url, json=payload, headers=headers, ssl=self.ssl_context) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"GigaChat API error {resp.status}: {error_text}")
@@ -104,7 +108,7 @@ class GigaChatClientWrapper:
         }
 
         async with aiohttp.ClientSession(timeout=self.timeout) as session:
-            async with session.post(self.api_url, json=payload, headers=headers) as resp:
+            async with session.post(self.api_url, json=payload, headers=headers, ssl=self.ssl_context) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"GigaChat API error {resp.status}: {error_text}")
