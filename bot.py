@@ -2,6 +2,7 @@ import asyncio
 import logging
 import aiohttp
 import json
+from datetime import datetime, timezone, timedelta
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command, CommandStart, CommandObject
@@ -42,23 +43,15 @@ gemini = GigaChatClientWrapper(
     client_secret=GIGACHAT_SECRET
 )
 
-# Виртуальная примерка
 tryon = VirtualTryOn() if REPLICATE_API_TOKEN else None
 
-# ---- Клавиатуры ----
+# ---- Клавиатуры (без изменений) ----
 def get_gender_keyboard():
-    kb = [
-        [KeyboardButton(text="👩 Девушка"), KeyboardButton(text="👨 Парень")],
-        [KeyboardButton(text="⏩ Пропустить")]
-    ]
+    kb = [[KeyboardButton(text="👩 Девушка"), KeyboardButton(text="👨 Парень")],[KeyboardButton(text="⏩ Пропустить")]]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
 
 def get_style_keyboard():
-    kb = [
-        [KeyboardButton(text="👕 Повседневный"), KeyboardButton(text="💼 Деловой")],
-        [KeyboardButton(text="🌸 Романтичный"), KeyboardButton(text="⚽ Спортивный")],
-        [KeyboardButton(text="⏩ Пропустить")]
-    ]
+    kb = [[KeyboardButton(text="👕 Повседневный"), KeyboardButton(text="💼 Деловой")],[KeyboardButton(text="🌸 Романтичный"), KeyboardButton(text="⚽ Спортивный")],[KeyboardButton(text="⏩ Пропустить")]]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
 
 def get_main_keyboard():
@@ -71,11 +64,7 @@ def get_main_keyboard():
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def get_result_keyboard():
-    buttons = [
-        [InlineKeyboardButton(text="🔄 Ещё совет", callback_data="more_advice")],
-        [InlineKeyboardButton(text="📤 Поделиться", callback_data="share_result")],
-        [InlineKeyboardButton(text="⭐ В избранное", callback_data="save_favorite")]
-    ]
+    buttons = [[InlineKeyboardButton(text="🔄 Ещё совет", callback_data="more_advice")],[InlineKeyboardButton(text="📤 Поделиться", callback_data="share_result")],[InlineKeyboardButton(text="⭐ В избранное", callback_data="save_favorite")]]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_wardrobe_keyboard(items):
@@ -102,16 +91,22 @@ def get_tryon_clothing_keyboard(items, callback_prefix="tryon_cloth"):
     buttons.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="tryon_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---- Вспомогательная функция бонуса ----
-async def grant_welcome_bonus(user_id: str):
+# ---- Ежедневные бонусы ----
+async def add_daily_bonus(user_id: str):
+    """Начисляет 0.5 бонуса за каждый день, максимум 3"""
     user = database.get_user(user_id)
-    if not user.get("welcome_bonus_granted", False):
-        new_bonus = user.get("bonus_requests", 0) + 1
+    last_bonus_date = user.get("last_bonus_date")
+    today = datetime.now(timezone.utc).date().isoformat()
+    if last_bonus_date != today:
+        current_bonus = user.get("bonus_requests", 0.0)
+        new_bonus = min(current_bonus + 0.5, 3.0)  # максимум 3
         database.update_user(user_id, {
             "bonus_requests": new_bonus,
-            "welcome_bonus_granted": True
+            "last_bonus_date": today
         })
-        logger.info(f"Welcome bonus granted to user {user_id}")
+        logger.info(f"Daily bonus added for {user_id}: +0.5 -> {new_bonus}")
+        return True, new_bonus
+    return False, user.get("bonus_requests", 0.0)
 
 # ---- Обработчики команд ----
 @dp.message(CommandStart(deep_link=True))
@@ -130,6 +125,10 @@ async def cmd_start(message: Message, state: FSMContext):
         del last_results_cache[user_id]
     try:
         user = database.get_user(user_id)
+        # Ежедневный бонус
+        bonus_added, new_bonus = await add_daily_bonus(user_id)
+        bonus_text = f"\n🎁 <b>+0.5 бонусного анализа за сегодня!</b> (всего {int(new_bonus)})\n" if bonus_added else ""
+
         if not user.get("gender") or not user.get("style_preference"):
             await state.set_state(ProfileStates.waiting_gender)
             await message.answer(
@@ -142,7 +141,7 @@ async def cmd_start(message: Message, state: FSMContext):
             )
         else:
             await message.answer(
-                "✨ <b>Снова рад тебя видеть!</b>\n\n"
+                f"✨ <b>Снова рад тебя видеть!</b>{bonus_text}\n\n"
                 "Отправь мне своё фото в полный рост, и я оценю твой образ, дам советы "
                 "с учётом трендов 2026.\n\n"
                 "Также можешь задать текстовый вопрос о моде — я помогу!\n\n"
@@ -161,67 +160,60 @@ async def process_gender(message: Message, state: FSMContext):
     gender = message.text.split()[1]
     database.set_user_info(user_id, gender=gender)
     await state.set_state(ProfileStates.waiting_style)
-    await message.answer(
-        "Отлично! А какой стиль тебе ближе?",
-        reply_markup=get_style_keyboard()
-    )
+    await message.answer("Отлично! А какой стиль тебе ближе?", reply_markup=get_style_keyboard())
 
 @dp.message(ProfileStates.waiting_gender, F.text == "⏩ Пропустить")
 async def skip_gender(message: Message, state: FSMContext):
     await state.set_state(ProfileStates.waiting_style)
-    await message.answer(
-        "Хорошо, пропустим этот вопрос. А какой стиль тебе ближе?",
-        reply_markup=get_style_keyboard()
-    )
+    await message.answer("Хорошо, пропустим этот вопрос. А какой стиль тебе ближе?", reply_markup=get_style_keyboard())
 
 @dp.message(ProfileStates.waiting_style, F.text.in_(["👕 Повседневный", "💼 Деловой", "🌸 Романтичный", "⚽ Спортивный"]))
 async def process_style(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     style = message.text.split()[1]
     database.set_user_info(user_id, style=style)
-    await grant_welcome_bonus(user_id)
+    # Приветственный бонус
+    user = database.get_user(user_id)
+    if not user.get("welcome_bonus_granted", False):
+        new_bonus = user.get("bonus_requests", 0) + 1
+        database.update_user(user_id, {"bonus_requests": new_bonus, "welcome_bonus_granted": True})
+        await message.answer("🎁 В подарок вы получили +1 бесплатный анализ!")
     await state.clear()
     await message.answer(
         "Спасибо! Теперь отправь мне фото, и я проанализирую образ.\n\n"
-        "Также ты можешь просто задать текстовый вопрос – я помогу!\n\n"
-        "🎁 <b>В подарок ты получил +1 бесплатный анализ!</b>",
-        parse_mode="HTML",
+        "Также ты можешь просто задать текстовый вопрос – я помогу!",
         reply_markup=get_main_keyboard()
     )
 
 @dp.message(ProfileStates.waiting_style, F.text == "⏩ Пропустить")
 async def skip_style(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
-    await grant_welcome_bonus(user_id)
+    user = database.get_user(user_id)
+    if not user.get("welcome_bonus_granted", False):
+        new_bonus = user.get("bonus_requests", 0) + 1
+        database.update_user(user_id, {"bonus_requests": new_bonus, "welcome_bonus_granted": True})
+        await message.answer("🎁 В подарок вы получили +1 бесплатный анализ!")
     await state.clear()
     await message.answer(
         "Хорошо, если захочешь заполнить позже — просто нажми /profile.\n\n"
-        "А пока отправь фото или задай вопрос!\n\n"
-        "🎁 <b>В подарок ты получил +1 бесплатный анализ!</b>",
-        parse_mode="HTML",
+        "А пока отправь фото или задай вопрос!",
         reply_markup=get_main_keyboard()
     )
 
 @dp.message(ProfileStates.waiting_gender)
 async def invalid_gender_input(message: Message):
-    await message.answer(
-        "Пожалуйста, выбери свой пол с помощью кнопок ниже 👇",
-        reply_markup=get_gender_keyboard()
-    )
+    await message.answer("Пожалуйста, выбери свой пол с помощью кнопок ниже 👇", reply_markup=get_gender_keyboard())
 
 @dp.message(ProfileStates.waiting_style)
 async def invalid_style_input(message: Message):
-    await message.answer(
-        "Пожалуйста, выбери предпочитаемый стиль с помощью кнопок ниже 👇",
-        reply_markup=get_style_keyboard()
-    )
+    await message.answer("Пожалуйста, выбери предпочитаемый стиль с помощью кнопок ниже 👇", reply_markup=get_style_keyboard())
 
 # ---- Обработчики команд (profile, premium, referral, help, favorites) ----
 @dp.message(Command("profile"))
 async def cmd_profile(message: Message):
     user_id = str(message.from_user.id)
     user = database.get_user(user_id)
-    free = max(0, 3 - user.get("total_free_requests", 0)) + user.get("bonus_requests", 0)
+    free = max(0, 3 - user.get("total_free_requests", 0)) + int(user.get("bonus_requests", 0))  # отображаем целую часть
     text = (
         f"👤 <b>Твой профиль</b>\n\n"
         f"• Пол: {user.get('gender', 'не указан')}\n"
@@ -239,13 +231,10 @@ async def cmd_profile(message: Message):
 async def cmd_premium(message: Message):
     user_id = str(message.from_user.id)
     if database.is_premium(user_id):
-        await message.answer(
-            "✅ У вас активна премиум-подписка! Все запросы безлимитны.",
-            reply_markup=get_main_keyboard()
-        )
+        await message.answer("✅ У вас активна премиум-подписка! Все запросы безлимитны.", reply_markup=get_main_keyboard())
     else:
         used = database.get_user(user_id).get("total_free_requests", 0)
-        bonus = database.get_user(user_id).get("bonus_requests", 0)
+        bonus = int(database.get_user(user_id).get("bonus_requests", 0))
         remaining = max(0, 3 - used) + bonus
         await message.answer(
             f"🔓 У вас осталось <b>{remaining}</b> бесплатных анализов (3 базовых + бонусы).\n\n"
@@ -260,10 +249,9 @@ async def cmd_referral(message: Message):
     user_id = str(message.from_user.id)
     link = database.get_referral_link(user_id)
     user = database.get_user(user_id)
-    bonus = user.get("bonus_requests", 0)
+    bonus = int(user.get("bonus_requests", 0))
     await message.answer(
-        f"🔗 <b>Твоя реферальная ссылка</b>\n\n"
-        f"{link}\n\n"
+        f"🔗 <b>Твоя реферальная ссылка</b>\n\n{link}\n\n"
         f"📢 <b>Как это работает</b>\n"
         f"• Твой друг переходит по ссылке и начинает пользоваться ботом\n"
         f"• Вы оба получаете <b>+1 бесплатный анализ</b>!\n"
@@ -294,59 +282,47 @@ async def cmd_help(message: Message):
         "/help — эта справка\n\n"
         "🔜 <b>Скоро в боте:</b>\n"
         "• Интеграция с магазинами\n"
-        "• Ежедневные бонусы",
+        "• Ежедневные бонусы (уже работают!)",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
 
+# ---- Избранное (пагинация) ----
 @dp.message(Command("favorites"))
 async def cmd_favorites(message: Message):
     user_id = str(message.from_user.id)
     favorites = database.get_favorites(user_id)
     if not favorites:
-        await message.answer(
-            "⭐ У тебя пока нет сохранённых образов.",
-            reply_markup=get_main_keyboard()
-        )
+        await message.answer("⭐ У тебя пока нет сохранённых образов.", reply_markup=get_main_keyboard())
         return
     await show_favorites_page(message, favorites, page=0)
 
 async def show_favorites_page(message: Message, favorites: list, page: int):
     items_per_page = 5
     total_pages = (len(favorites) + items_per_page - 1) // items_per_page
-    if page >= total_pages:
-        page = total_pages - 1
-    if page < 0:
-        page = 0
-
+    if page >= total_pages: page = total_pages - 1
+    if page < 0: page = 0
     start = page * items_per_page
     end = start + items_per_page
     page_favorites = favorites[start:end]
-
     text = f"⭐ <b>Сохранённые образы</b> (страница {page+1}/{total_pages if total_pages>0 else 1}):\n\n"
     for idx, fav in enumerate(page_favorites, start=start+1):
         short_text = fav['result_text'][:80] + "..." if len(fav['result_text']) > 80 else fav['result_text']
         text += f"{idx}. {short_text}\n"
-
     buttons = []
     for fav in page_favorites:
         buttons.append([InlineKeyboardButton(text=f"❌ Удалить запись #{fav['id']}", callback_data=f"delete_fav_{fav['id']}")])
     nav_buttons = []
-    if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"fav_page_{page-1}"))
-    if page < total_pages - 1:
-        nav_buttons.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"fav_page_{page+1}"))
-    if nav_buttons:
-        buttons.append(nav_buttons)
+    if page > 0: nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"fav_page_{page-1}"))
+    if page < total_pages - 1: nav_buttons.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"fav_page_{page+1}"))
+    if nav_buttons: buttons.append(nav_buttons)
     buttons.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="close_favorites")])
-
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     if hasattr(message, 'edit_text'):
         await message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
     else:
         await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
-# ---- Обработчики избранного ----
 @dp.callback_query(lambda c: c.data.startswith("fav_page_"))
 async def favorites_page_callback(callback: CallbackQuery):
     page = int(callback.data.split("_")[2])
@@ -380,10 +356,7 @@ async def close_favorites(callback: CallbackQuery):
 # ---- Обработчики кнопок главного меню ----
 @dp.message(F.text == "📸 Анализировать")
 async def main_analyze(message: Message):
-    await message.answer(
-        "📸 Отправь мне фото в полный рост, и я оценю твой образ!",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    await message.answer("📸 Отправь мне фото в полный рост, и я оценю твой образ!", reply_markup=ReplyKeyboardRemove())
 
 @dp.message(F.text == "👤 Мой профиль")
 async def main_profile(message: Message):
@@ -393,21 +366,7 @@ async def main_profile(message: Message):
 async def handle_premium_button(message: Message):
     price_rub = 299
     price_kopecks = price_rub * 100
-    provider_data = {
-        "receipt": {
-            "items": [
-                {
-                    "description": "Премиум-подписка на 1 месяц (безлимитный доступ)",
-                    "quantity": "1.00",
-                    "amount": {
-                        "value": f"{price_rub:.2f}",
-                        "currency": "RUB"
-                    },
-                    "vat_code": 1
-                }
-            ]
-        }
-    }
+    provider_data = {"receipt": {"items": [{"description": "Премиум-подписка на 1 месяц (безлимитный доступ)", "quantity": "1.00", "amount": {"value": f"{price_rub:.2f}", "currency": "RUB"}, "vat_code": 1}]}}
     await bot.send_invoice(
         chat_id=message.chat.id,
         title="Премиум-подписка",
@@ -476,7 +435,7 @@ async def virtual_tryon_start(message: Message, state: FSMContext):
 async def main_help(message: Message):
     await cmd_help(message)
 
-# ---- Обработчики гардероба (новый, с ручным вводом) ----
+# ---- Обработчики гардероба (исправлены дубли) ----
 @dp.callback_query(lambda c: c.data == "wardrobe_add")
 async def wardrobe_add_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(WardrobeStates.waiting_for_photo)
@@ -491,12 +450,9 @@ async def wardrobe_add_callback(callback: CallbackQuery, state: FSMContext):
 async def wardrobe_add_photo(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     photo = message.photo[-1]
-
     if photo.file_size > 5 * 1024 * 1024:
         await message.reply("⚠️ Фото слишком большое (до 5 МБ).")
         return
-
-    # Скачиваем фото
     file = await bot.get_file(photo.file_id)
     file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
     async with aiohttp.ClientSession() as session:
@@ -504,9 +460,8 @@ async def wardrobe_add_photo(message: Message, state: FSMContext):
             if resp.status != 200:
                 await message.reply("❌ Не удалось загрузить фото.")
                 return
-            image_bytes = await resp.read()
-
-    # Сохраняем URL фото в состояние
+            # просто читаем, не используем image_bytes
+            await resp.read()
     await state.update_data(image_url=file_url)
     await state.set_state(WardrobeStates.waiting_clothing_type)
     await message.answer(
@@ -547,7 +502,9 @@ async def wardrobe_description(message: Message, state: FSMContext):
         await state.clear()
         return
 
+    # Сохраняем
     database.add_to_wardrobe(user_id, image_url, clothing_type, description)
+    # Очищаем состояние, чтобы избежать повторной обработки
     await state.clear()
     await message.answer(
         f"✅ <b>Вещь добавлена в гардероб!</b>\n\n"
@@ -585,7 +542,6 @@ async def wardrobe_suggest_callback(callback: CallbackQuery):
     if len(items) < 2:
         await callback.answer("Для подбора образа нужно хотя бы 2 вещи в гардеробе!", show_alert=True)
         return
-
     wardrobe_text = "\n".join([f"- {item.get('clothing_type', 'неизвестно')}: {item.get('description', 'без описания')}" for item in items])
     prompt = (
         f"Ты — стилист. У пользователя есть следующие вещи:\n{wardrobe_text}\n\n"
@@ -594,7 +550,6 @@ async def wardrobe_suggest_callback(callback: CallbackQuery):
         f"предпочтения в стиле: {database.get_user(user_id).get('style_preference', 'не указан')}. "
         f"Ответ должен быть на русском, дружелюбным, с конкретными советами."
     )
-
     await callback.message.answer("🧠 Думаю над образами...")
     try:
         result = await gemini.generate_text(prompt)
@@ -616,7 +571,6 @@ async def tryon_person_photo_received(message: Message, state: FSMContext):
     file = await bot.get_file(photo.file_id)
     file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
     await state.update_data(person_image_url=file_url)
-
     user_id = str(message.from_user.id)
     items = database.get_wardrobe(user_id)
     if not items:
@@ -626,7 +580,6 @@ async def tryon_person_photo_received(message: Message, state: FSMContext):
         )
         await state.clear()
         return
-
     await state.set_state(TryOnStates.waiting_clothing_selection)
     await message.answer(
         "Теперь выберите одежду, которую хотите примерить:",
@@ -650,18 +603,15 @@ async def tryon_select_clothing(callback: CallbackQuery, state: FSMContext):
     if not selected_item:
         await callback.answer("Вещь не найдена.", show_alert=True)
         return
-
     data = await state.get_data()
     person_image_url = data.get("person_image_url")
     if not person_image_url:
         await callback.answer("Ошибка: фото человека не найдено. Попробуйте начать заново.", show_alert=True)
         await state.clear()
         return
-
     clothing_image_url = selected_item['image_url']
     await callback.message.answer("🔄 Выполняю примерку... Это может занять до 30 секунд.")
     await callback.answer()
-
     try:
         result_url = await tryon.try_on(person_image_url, clothing_image_url)
         if result_url:
@@ -676,7 +626,6 @@ async def tryon_select_clothing(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.exception("Ошибка примерки")
         await callback.message.answer("❌ Произошла ошибка. Попробуйте позже.")
-
     await state.clear()
 
 @dp.callback_query(lambda c: c.data == "tryon_cancel")
@@ -692,19 +641,15 @@ async def handle_photo(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state in [WardrobeStates.waiting_for_photo.state, TryOnStates.waiting_person_photo.state]:
         return
-
     user_id = str(message.from_user.id)
     logger.info(f"Photo handler called for user {user_id}")
-
     if current_state is not None:
         await state.clear()
         await message.answer("Ок, продолжим с анализа фото. Но сначала заполни свой профиль позже через /profile.")
-
     photo = message.photo[-1]
     if photo.file_size > 5 * 1024 * 1024:
         await message.reply("⚠️ Фото слишком большое (более 5 МБ). Пожалуйста, отправьте изображение поменьше.")
         return
-
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id):
             await message.reply(
@@ -717,13 +662,9 @@ async def handle_photo(message: Message, state: FSMContext):
                 reply_markup=get_main_keyboard()
             )
             return
-
     file = await bot.get_file(photo.file_id)
-    file_path = file.file_path
-    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-
+    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
     await message.reply("🔍 Анализирую ваш образ... Это займёт несколько секунд.", reply_markup=ReplyKeyboardRemove())
-
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(file_url) as resp:
@@ -731,31 +672,20 @@ async def handle_photo(message: Message, state: FSMContext):
                     await message.reply("❌ Не удалось загрузить фото. Попробуйте ещё раз.")
                     return
                 image_bytes = await resp.read()
-
         user = database.get_user(user_id)
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
-
         personal_prompt = SYSTEM_PROMPT
         if gender:
             personal_prompt += f"\nПользователь: {gender}."
         if style:
             personal_prompt += f"\nПредпочитаемый стиль: {style}."
-
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         result_with_links = generate_affiliate_links(result)
-
         last_results_cache[user_id] = result_with_links
-
-        await message.reply(
-            result_with_links,
-            reply_markup=get_result_keyboard(),
-            parse_mode="HTML"
-        )
-
+        await message.reply(result_with_links, reply_markup=get_result_keyboard(), parse_mode="HTML")
         if user_id != DEVELOPER_ID and not database.is_premium(user_id):
             database.use_request(user_id)
-
     except Exception as e:
         logger.exception("Ошибка обработки фото: %s", e)
         await message.reply(
@@ -770,12 +700,10 @@ async def handle_text(message: Message, state: FSMContext):
         return
     if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "🔗 Рефералка", "💬 Спросить стилиста", "🧥 Гардероб", "👗 Виртуальная примерка", "❓ Помощь"]:
         return
-
     current_state = await state.get_state()
     if current_state is not None:
         await message.answer("Пожалуйста, сначала завершите текущее действие с помощью кнопок.")
         return
-
     user_id = str(message.from_user.id)
     if user_id != DEVELOPER_ID:
         if not database.can_request(user_id):
@@ -789,9 +717,7 @@ async def handle_text(message: Message, state: FSMContext):
                 reply_markup=get_main_keyboard()
             )
             return
-
     await message.reply("💭 Думаю... Это займёт несколько секунд.", reply_markup=ReplyKeyboardRemove())
-
     try:
         user = database.get_user(user_id)
         gender = user.get("gender", "")
@@ -805,16 +731,11 @@ async def handle_text(message: Message, state: FSMContext):
         )
         answer = await gemini.generate_text(message.text, system_prompt=text_prompt)
         await message.reply(answer, parse_mode="HTML", reply_markup=get_main_keyboard())
-
         if user_id != DEVELOPER_ID and not database.is_premium(user_id):
             database.use_request(user_id)
-
     except Exception as e:
         logger.exception("Ошибка текстового запроса: %s", e)
-        await message.reply(
-            "❌ Не удалось обработать запрос. Попробуйте позже.",
-            reply_markup=get_main_keyboard()
-        )
+        await message.reply("❌ Не удалось обработать запрос. Попробуйте позже.", reply_markup=get_main_keyboard())
 
 # ---- Обработчики inline-кнопок (редактирование профиля) ----
 @dp.callback_query(lambda c: c.data == "edit_profile")
@@ -824,11 +745,7 @@ async def edit_profile_menu(callback: CallbackQuery):
         [InlineKeyboardButton(text="👕 Стиль", callback_data="edit_style")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_profile")]
     ])
-    await callback.message.edit_text(
-        "🔧 <b>Что хотите изменить?</b>",
-        parse_mode="HTML",
-        reply_markup=keyboard
-    )
+    await callback.message.edit_text("🔧 <b>Что хотите изменить?</b>", parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "back_to_profile")
@@ -844,10 +761,7 @@ async def edit_gender(callback: CallbackQuery):
         [InlineKeyboardButton(text="👨 Парень", callback_data="set_gender_Парень")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="edit_profile")]
     ])
-    await callback.message.edit_text(
-        "Выберите пол:",
-        reply_markup=keyboard
-    )
+    await callback.message.edit_text("Выберите пол:", reply_markup=keyboard)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("set_gender_"))
@@ -865,10 +779,7 @@ async def edit_style(callback: CallbackQuery):
     buttons = [[InlineKeyboardButton(text=style, callback_data=f"set_style_{style}")] for style in styles]
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="edit_profile")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await callback.message.edit_text(
-        "Выберите предпочитаемый стиль:",
-        reply_markup=keyboard
-    )
+    await callback.message.edit_text("Выберите предпочитаемый стиль:", reply_markup=keyboard)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("set_style_"))
@@ -902,10 +813,7 @@ async def share_result_callback(callback: CallbackQuery):
         return
     try:
         img_bytes = image_utils.create_result_image(result)
-        await callback.message.answer_photo(
-            photo=img_bytes,
-            caption="✨ Твой результат в виде картинки для публикации! ✨"
-        )
+        await callback.message.answer_photo(photo=img_bytes, caption="✨ Твой результат в виде картинки для публикации! ✨")
         await callback.answer("Картинка готова!", show_alert=False)
     except Exception as e:
         logger.exception("Ошибка генерации картинки")
@@ -932,7 +840,6 @@ async def pre_checkout(query: PreCheckoutQuery):
 async def process_payment(message: Message):
     user_id = str(message.from_user.id)
     payload = message.successful_payment.invoice_payload
-
     if payload == "premium_30d":
         database.set_premium(user_id, duration_days=30)
         await message.answer(
@@ -943,10 +850,7 @@ async def process_payment(message: Message):
             reply_markup=get_main_keyboard()
         )
     else:
-        await message.answer(
-            "Неизвестный тип оплаты. Обратитесь к разработчику.",
-            reply_markup=get_main_keyboard()
-        )
+        await message.answer("Неизвестный тип оплаты. Обратитесь к разработчику.", reply_markup=get_main_keyboard())
 
 # ---- Команда /wardrobe ----
 @dp.message(Command("wardrobe"))
