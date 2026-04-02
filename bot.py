@@ -17,7 +17,8 @@ from config import (
     DEVELOPER_ID,
     GIGACHAT_CLIENT_ID,
     GIGACHAT_SECRET,
-    YOOKASSA_PROVIDER_TOKEN
+    YOOKASSA_PROVIDER_TOKEN,
+    REPLICATE_API_TOKEN
 )
 
 from gigachat_client import GigaChatClientWrapper
@@ -27,7 +28,8 @@ import database
 import image_utils
 import clothing_recognition
 from cache import last_results_cache
-from states import ProfileStates, WardrobeStates
+from states import ProfileStates, WardrobeStates, TryOnStates
+from virtual_tryon import VirtualTryOn
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -40,6 +42,9 @@ gemini = GigaChatClientWrapper(
     client_id=GIGACHAT_CLIENT_ID,
     client_secret=GIGACHAT_SECRET
 )
+
+# Виртуальная примерка (если есть токен)
+tryon = VirtualTryOn() if REPLICATE_API_TOKEN else None
 
 # ---- Клавиатуры ----
 def get_gender_keyboard():
@@ -62,7 +67,7 @@ def get_main_keyboard():
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="💎 Премиум"), KeyboardButton(text="🔗 Рефералка")],
         [KeyboardButton(text="💬 Спросить стилиста"), KeyboardButton(text="🧥 Гардероб")],
-        [KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="👗 Виртуальная примерка"), KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -75,7 +80,6 @@ def get_result_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_wardrobe_keyboard(items):
-    """Создаёт инлайн-клавиатуру для списка вещей с кнопками удаления"""
     buttons = []
     for item in items:
         clothing_type = item.get('clothing_type', 'неизвестно')
@@ -83,12 +87,20 @@ def get_wardrobe_keyboard(items):
         short_desc = description[:30] + "..." if len(description) > 30 else description
         text = f"❌ {clothing_type}: {short_desc}"
         buttons.append([InlineKeyboardButton(text=text, callback_data=f"wardrobe_del_{item['id']}")])
-    # Кнопка добавить новую вещь
     buttons.append([InlineKeyboardButton(text="➕ Добавить вещь", callback_data="wardrobe_add")])
-    # Кнопка подобрать образ
     buttons.append([InlineKeyboardButton(text="👕 Подобрать образ из гардероба", callback_data="wardrobe_suggest")])
-    # Кнопка закрыть
     buttons.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="wardrobe_close")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_tryon_clothing_keyboard(items, callback_prefix="tryon_cloth"):
+    buttons = []
+    for item in items:
+        clothing_type = item.get('clothing_type', 'неизвестно')
+        description = item.get('description', 'без описания')
+        short_desc = description[:25] + "..." if len(description) > 25 else description
+        text = f"👕 {clothing_type}: {short_desc}"
+        buttons.append([InlineKeyboardButton(text=text, callback_data=f"{callback_prefix}_{item['id']}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="tryon_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ---- Вспомогательная функция начисления бонуса ----
@@ -271,7 +283,8 @@ async def cmd_help(message: Message):
         "3️⃣ Сохраняй понравившиеся идеи в избранное\n"
         "4️⃣ Оплати подписку, чтобы снять лимиты\n"
         "5️⃣ Приглашай друзей по реферальной ссылке – получай бонусные анализы\n"
-        "6️⃣ Добавляй вещи в гардероб – получай подборки образов\n\n"
+        "6️⃣ Добавляй вещи в гардероб – получай подборки образов\n"
+        "7️⃣ Виртуальная примерка – примерь любую вещь из гардероба на своё фото\n\n"
         "<b>Команды:</b>\n"
         "/start — начать заново\n"
         "/profile — мой профиль\n"
@@ -282,7 +295,7 @@ async def cmd_help(message: Message):
         "/help — эта справка\n\n"
         "🔜 <b>Скоро в боте:</b>\n"
         "• Интеграция с магазинами\n"
-        "• Виртуальная примерка",
+        "• Ежедневные бонусы",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
@@ -446,6 +459,21 @@ async def wardrobe_menu(message: Message):
             text += f"• {clothing_type}: {description}\n"
         await message.answer(text, parse_mode="HTML", reply_markup=get_wardrobe_keyboard(items))
 
+@dp.message(F.text == "👗 Виртуальная примерка")
+async def virtual_tryon_start(message: Message, state: FSMContext):
+    if not tryon:
+        await message.answer("❌ Виртуальная примерка временно недоступна. Попробуйте позже.")
+        return
+    await state.set_state(TryOnStates.waiting_person_photo)
+    await message.answer(
+        "📸 <b>Виртуальная примерка</b>\n\n"
+        "Отправьте фото человека (в полный рост или хотя бы верхнюю часть), "
+        "на которое хотите примерить одежду.\n\n"
+        "Фото должно быть чётким, лучше на светлом фоне.",
+        parse_mode="HTML",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
     await cmd_help(message)
@@ -486,7 +514,6 @@ async def wardrobe_suggest_callback(callback: CallbackQuery):
         await callback.answer("Для подбора образа нужно хотя бы 2 вещи в гардеробе!", show_alert=True)
         return
 
-    # Формируем запрос к GigaChat
     wardrobe_text = "\n".join([f"- {item.get('clothing_type', 'неизвестно')}: {item.get('description', 'без описания')}" for item in items])
     prompt = (
         f"Ты — стилист. У пользователя есть следующие вещи:\n{wardrobe_text}\n\n"
@@ -520,7 +547,6 @@ async def wardrobe_add_photo(message: Message, state: FSMContext):
         await message.reply("⚠️ Фото слишком большое (до 5 МБ).")
         return
 
-    # Скачиваем фото
     file = await bot.get_file(photo.file_id)
     file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
     async with aiohttp.ClientSession() as session:
@@ -530,11 +556,9 @@ async def wardrobe_add_photo(message: Message, state: FSMContext):
                 return
             image_bytes = await resp.read()
 
-    # Распознаём
     await message.reply("🔍 Распознаю предмет...")
     clothing_type, description = await clothing_recognition.recognize_clothing(image_bytes, gemini)
 
-    # Сохраняем в базу (image_url можно сохранить ссылку на telegram-файл)
     database.add_to_wardrobe(user_id, file_url, clothing_type, description)
 
     await state.clear()
@@ -550,18 +574,93 @@ async def wardrobe_add_photo(message: Message, state: FSMContext):
 async def wardrobe_add_invalid(message: Message):
     await message.answer("Пожалуйста, отправьте фото одежды.")
 
+# ---- Обработчики виртуальной примерки ----
+@dp.message(TryOnStates.waiting_person_photo, F.photo)
+async def tryon_person_photo_received(message: Message, state: FSMContext):
+    photo = message.photo[-1]
+    file = await bot.get_file(photo.file_id)
+    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
+    await state.update_data(person_image_url=file_url)
+
+    user_id = str(message.from_user.id)
+    items = database.get_wardrobe(user_id)
+    if not items:
+        await message.answer(
+            "У вас пока нет вещей в гардеробе. Сначала добавьте одежду через кнопку «Гардероб».",
+            reply_markup=get_main_keyboard()
+        )
+        await state.clear()
+        return
+
+    await state.set_state(TryOnStates.waiting_clothing_selection)
+    await message.answer(
+        "Теперь выберите одежду, которую хотите примерить:",
+        reply_markup=get_tryon_clothing_keyboard(items)
+    )
+
+@dp.message(TryOnStates.waiting_person_photo)
+async def tryon_person_photo_invalid(message: Message):
+    await message.answer("Пожалуйста, отправьте фото.")
+
+@dp.callback_query(TryOnStates.waiting_clothing_selection, lambda c: c.data.startswith("tryon_cloth_"))
+async def tryon_select_clothing(callback: CallbackQuery, state: FSMContext):
+    item_id = int(callback.data.split("_")[2])
+    user_id = str(callback.from_user.id)
+    items = database.get_wardrobe(user_id)
+    selected_item = None
+    for item in items:
+        if item['id'] == item_id:
+            selected_item = item
+            break
+    if not selected_item:
+        await callback.answer("Вещь не найдена.", show_alert=True)
+        return
+
+    data = await state.get_data()
+    person_image_url = data.get("person_image_url")
+    if not person_image_url:
+        await callback.answer("Ошибка: фото человека не найдено. Попробуйте начать заново.", show_alert=True)
+        await state.clear()
+        return
+
+    clothing_image_url = selected_item['image_url']
+    await callback.message.answer("🔄 Выполняю примерку... Это может занять до 30 секунд.")
+    await callback.answer()
+
+    try:
+        result_url = await tryon.try_on(person_image_url, clothing_image_url)
+        if result_url:
+            if isinstance(result_url, list):
+                result_url = result_url[0]
+            await callback.message.answer_photo(
+                photo=result_url,
+                caption=f"✨ Примерка '{selected_item['clothing_type']}': {selected_item['description']}"
+            )
+        else:
+            await callback.message.answer("❌ Не удалось выполнить примерку. Попробуйте другое фото или другую вещь.")
+    except Exception as e:
+        logger.exception("Ошибка примерки")
+        await callback.message.answer("❌ Произошла ошибка. Попробуйте позже.")
+
+    await state.clear()
+
+@dp.callback_query(lambda c: c.data == "tryon_cancel")
+async def tryon_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.answer("Виртуальная примерка отменена.", reply_markup=get_main_keyboard())
+    await callback.message.delete()
+    await callback.answer()
+
 # ---- Обработчик фото (основной) ----
 @dp.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
-    # Если пользователь в режиме добавления в гардероб, обрабатываем в специальном хендлере
     current_state = await state.get_state()
-    if current_state == WardrobeStates.waiting_for_photo.state:
+    if current_state in [WardrobeStates.waiting_for_photo.state, TryOnStates.waiting_person_photo.state]:
         return
 
     user_id = str(message.from_user.id)
     logger.info(f"Photo handler called for user {user_id}")
 
-    # Если пользователь в опросе профиля, сбрасываем
     if current_state is not None:
         await state.clear()
         await message.answer("Ок, продолжим с анализа фото. Но сначала заполни свой профиль позже через /profile.")
@@ -634,7 +733,7 @@ async def handle_photo(message: Message, state: FSMContext):
 async def handle_text(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "🔗 Рефералка", "💬 Спросить стилиста", "🧥 Гардероб", "❓ Помощь"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "🔗 Рефералка", "💬 Спросить стилиста", "🧥 Гардероб", "👗 Виртуальная примерка", "❓ Помощь"]:
         return
 
     current_state = await state.get_state()
