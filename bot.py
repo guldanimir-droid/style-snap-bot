@@ -91,6 +91,30 @@ def get_tryon_clothing_keyboard(items, callback_prefix="tryon_cloth"):
     buttons.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="tryon_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+# ---- Проверка на безопасность ----
+async def check_image_safety(image_bytes: bytes) -> bool:
+    """
+    Проверяет, содержит ли изображение NSFW-контент.
+    Возвращает True, если безопасно, False если небезопасно.
+    """
+    moderation_prompt = (
+        "Ты — модератор. Определи, есть ли на фото обнажённые участки тела, "
+        "нижнее бельё, купальники, сексуальные позы или интимные сцены. "
+        "Ответь только одним словом: 'опасно' или 'безопасно'."
+    )
+    try:
+        result = await gemini.analyze_style(image_bytes, moderation_prompt)
+        result_lower = result.strip().lower()
+        if 'опасно' in result_lower:
+            logger.info("NSFW content detected")
+            return False
+        else:
+            return True
+    except Exception as e:
+        logger.error(f"Safety check failed: {e}")
+        # В случае ошибки лучше пропустить анализ, чтобы не блокировать пользователя
+        return True
+
 # ---- Ежедневные бонусы ----
 async def add_daily_bonus(user_id: str):
     """Начисляет 0.5 бонуса за каждый день, максимум 3"""
@@ -172,7 +196,6 @@ async def process_style(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     style = message.text.split()[1]
     database.set_user_info(user_id, style=style)
-    # Приветственный бонус
     user = database.get_user(user_id)
     if not user.get("welcome_bonus_granted", False):
         new_bonus = user.get("bonus_requests", 0) + 1
@@ -213,7 +236,7 @@ async def invalid_style_input(message: Message):
 async def cmd_profile(message: Message):
     user_id = str(message.from_user.id)
     user = database.get_user(user_id)
-    free = max(0, 3 - user.get("total_free_requests", 0)) + int(user.get("bonus_requests", 0))  # отображаем целую часть
+    free = max(0, 3 - user.get("total_free_requests", 0)) + int(user.get("bonus_requests", 0))
     text = (
         f"👤 <b>Твой профиль</b>\n\n"
         f"• Пол: {user.get('gender', 'не указан')}\n"
@@ -460,7 +483,6 @@ async def wardrobe_add_photo(message: Message, state: FSMContext):
             if resp.status != 200:
                 await message.reply("❌ Не удалось загрузить фото.")
                 return
-            # просто читаем, не используем image_bytes
             await resp.read()
     await state.update_data(image_url=file_url)
     await state.set_state(WardrobeStates.waiting_clothing_type)
@@ -502,9 +524,7 @@ async def wardrobe_description(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    # Сохраняем
     database.add_to_wardrobe(user_id, image_url, clothing_type, description)
-    # Очищаем состояние, чтобы избежать повторной обработки
     await state.clear()
     await message.answer(
         f"✅ <b>Вещь добавлена в гардероб!</b>\n\n"
@@ -564,7 +584,7 @@ async def wardrobe_close_callback(callback: CallbackQuery):
     await callback.message.delete()
     await callback.answer()
 
-# ---- Обработчики виртуальной примерки (без изменений) ----
+# ---- Обработчики виртуальной примерки ----
 @dp.message(TryOnStates.waiting_person_photo, F.photo)
 async def tryon_person_photo_received(message: Message, state: FSMContext):
     photo = message.photo[-1]
@@ -635,7 +655,7 @@ async def tryon_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
     await callback.answer()
 
-# ---- Обработчик фото (основной) ----
+# ---- Обработчик фото (основной) с проверкой безопасности ----
 @dp.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
     current_state = await state.get_state()
@@ -672,6 +692,19 @@ async def handle_photo(message: Message, state: FSMContext):
                     await message.reply("❌ Не удалось загрузить фото. Попробуйте ещё раз.")
                     return
                 image_bytes = await resp.read()
+        
+        # ---------- ПРОВЕРКА НА БЕЗОПАСНОСТЬ ----------
+        if not await check_image_safety(image_bytes):
+            await message.reply(
+                "⚠️ <b>Извините, я не могу анализировать фото с откровенным содержанием.</b>\n\n"
+                "Пожалуйста, отправьте фото в обычной одежде (футболка, рубашка, платье и т.д.).\n\n"
+                "Это необходимо для соблюдения правил и корректной работы стилиста.",
+                parse_mode="HTML",
+                reply_markup=get_main_keyboard()
+            )
+            return
+        # ------------------------------------------------
+        
         user = database.get_user(user_id)
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
