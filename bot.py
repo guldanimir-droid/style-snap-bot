@@ -58,7 +58,7 @@ def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="🔗 Рефералка"), KeyboardButton(text="💬 Спросить стилиста")],
-        [KeyboardButton(text="💸 Купить анализ"), KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -115,7 +115,7 @@ async def cmd_start(message: Message, state: FSMContext):
             "📸 Отправь своё фото — я дам совет по стилю.\n"
             "💬 Или задай текстовый вопрос о моде.\n\n"
             "Бесплатно: 3 анализа + бонусы за приглашения.\n"
-            "Дополнительные анализы — 10⭐ в меню.",
+            "Дополнительные анализы можно купить в профиле за Telegram Stars.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -172,7 +172,7 @@ async def invalid_gender_input(message: Message):
 async def invalid_style_input(message: Message):
     await message.answer("Выбери стиль с помощью кнопок 👇", reply_markup=get_style_keyboard())
 
-# ---- Профиль, рефералка, покупка ----
+# ---- Профиль, рефералка, пакеты ----
 @dp.message(Command("profile"))
 async def cmd_profile(message: Message):
     user_id = str(message.from_user.id)
@@ -190,34 +190,44 @@ async def cmd_profile(message: Message):
         f"• 🎁 Бонусных анализов: {bonus}\n"
         f"• 💰 Купленных анализов: {paid}\n"
         f"• <b>Всего доступно анализов: {total_remaining}</b>\n\n"
-        f"Если закончились — купи дополнительный за 10 Telegram Stars."
+        f"Пополнить баланс анализов можно Telegram Stars:"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_profile")],
         [InlineKeyboardButton(text="🔗 Реферальная ссылка", callback_data="show_referral")],
-        [InlineKeyboardButton(text="💸 Купить анализ (10⭐)", callback_data="buy_analysis")]
+        [InlineKeyboardButton(text="⭐ 1 анализ — 25 Stars", callback_data="buy_1")],
+        [InlineKeyboardButton(text="⭐ 3 анализа — 60 Stars", callback_data="buy_3")],
+        [InlineKeyboardButton(text="⭐ 5 анализов — 90 Stars", callback_data="buy_5")]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
-@dp.message(F.text == "💸 Купить анализ")
-async def buy_analysis_button(message: Message):
-    await send_buy_invoice(message.chat.id)
-
-async def send_buy_invoice(chat_id: int):
+# Функция отправки инвойса
+async def send_package_invoice(chat_id: int, amount: int, stars: int, package_name: str):
     await bot.send_invoice(
         chat_id=chat_id,
-        title="Анализ стиля",
-        description="Один анализ вашего фото с рекомендациями стилиста",
-        payload="single_analysis",
-        provider_token="",          # для Stars оставляем пустым
-        currency="XTR",             # валюта Telegram Stars
-        prices=[LabeledPrice(label="1 анализ", amount=10)],  # 10 звезд
-        start_parameter="buy_analysis"
+        title=package_name,
+        description=f"Купить {amount} анализов стиля за {stars} Telegram Stars",
+        payload=f"package_{amount}",
+        provider_token="",
+        currency="XTR",
+        prices=[LabeledPrice(label=f"{amount} анализов", amount=stars)],
+        start_parameter=f"buy_{amount}"
     )
 
-@dp.callback_query(lambda c: c.data == "buy_analysis")
-async def buy_analysis_callback(callback: CallbackQuery):
-    await send_buy_invoice(callback.from_user.id)
+# Обработчики выбора пакета
+@dp.callback_query(lambda c: c.data == "buy_1")
+async def buy_1_analysis(callback: CallbackQuery):
+    await send_package_invoice(callback.from_user.id, 1, 25, "1 анализ стиля")
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "buy_3")
+async def buy_3_analysis(callback: CallbackQuery):
+    await send_package_invoice(callback.from_user.id, 3, 60, "3 анализа стиля")
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "buy_5")
+async def buy_5_analysis(callback: CallbackQuery):
+    await send_package_invoice(callback.from_user.id, 5, 90, "5 анализов стиля")
     await callback.answer()
 
 @dp.message(Command("referral"))
@@ -241,7 +251,7 @@ async def cmd_help(message: Message):
         "✅ Отвечать на текстовые вопросы о моде\n"
         "✅ Сохранять удачные советы в избранное\n"
         "✅ Начислять бонусные анализы за приглашение друзей\n"
-        "✅ Продавать дополнительные анализы за Telegram Stars (10⭐)\n\n"
+        "✅ Продавать дополнительные анализы за Telegram Stars (пакеты 1, 3, 5 анализов)\n\n"
         "❌ Здесь нет гардероба, виртуальной примерки или интеграции с магазинами — это Telegram, а не полноценное приложение.\n\n"
         "<b>Команды:</b>\n"
         "/start — начать\n"
@@ -306,10 +316,6 @@ async def ask_stylist(message: Message):
         reply_markup=ReplyKeyboardRemove()
     )
 
-@dp.message(F.text == "💸 Купить анализ")
-async def buy_analysis_button(message: Message):
-    await send_buy_invoice(message.chat.id)
-
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
     await cmd_help(message)
@@ -328,7 +334,7 @@ async def handle_photo(message: Message, state: FSMContext):
     if not database.can_request(user_id):
         await message.reply(
             "❌ У вас закончились бесплатные анализы.\n"
-            "Купите дополнительный за 10 Telegram Stars в меню или в профиле.",
+            "Купите пакет анализов в профиле за Telegram Stars.",
             reply_markup=get_main_keyboard()
         )
         return
@@ -371,7 +377,7 @@ async def handle_photo(message: Message, state: FSMContext):
 async def handle_text(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "💸 Купить анализ", "❓ Помощь"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь"]:
         return
     current_state = await state.get_state()
     if current_state is not None:
@@ -505,11 +511,13 @@ async def pre_checkout(query: PreCheckoutQuery):
 async def process_payment(message: Message):
     user_id = str(message.from_user.id)
     payload = message.successful_payment.invoice_payload
-    if payload == "single_analysis":
-        database.add_paid_analysis(user_id)
+    if payload.startswith("package_"):
+        amount = int(payload.split("_")[1])
+        for _ in range(amount):
+            database.add_paid_analysis(user_id)
         await message.answer(
-            "✅ Оплата прошла успешно! Вам начислен 1 анализ.\n"
-            "Теперь можете отправить фото или текстовый вопрос.",
+            f"✅ Оплата прошла успешно! Вам начислено {amount} анализов.\n"
+            f"Теперь можете отправлять фото или текстовые вопросы.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
