@@ -207,7 +207,19 @@ async def buy_analysis_button(message: Message):
 async def send_buy_invoice(chat_id: int):
     price_rub = 10
     price_kopecks = price_rub * 100
-    provider_data = {"receipt": {"items": [{"description": "Один анализ стиля", "quantity": "1.00", "amount": {"value": f"{price_rub:.2f}", "currency": "RUB"}, "vat_code": 1}]}}
+    provider_data = {
+        "receipt": {
+            "items": [{
+                "description": "Один анализ стиля",
+                "quantity": "1.00",
+                "amount": {
+                    "value": f"{price_rub:.2f}",
+                    "currency": "RUB"
+                },
+                "vat_code": 1
+            }]
+        }
+    }
     await bot.send_invoice(
         chat_id=chat_id,
         title="Один анализ стиля",
@@ -218,7 +230,8 @@ async def send_buy_invoice(chat_id: int):
         prices=[LabeledPrice(label="1 анализ", amount=price_kopecks)],
         need_email=True,
         send_email_to_provider=True,
-        provider_data=json.dumps(provider_data)
+        provider_data=json.dumps(provider_data),
+        start_parameter="buy_analysis"
     )
 
 @dp.callback_query(lambda c: c.data == "buy_analysis")
