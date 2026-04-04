@@ -71,7 +71,7 @@ def get_result_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---- Проверка на безопасность (мягкая) ----
+# ---- Проверка на безопасность ----
 async def check_image_safety(image_bytes: bytes) -> bool:
     moderation_prompt = (
         "Ты — модератор. Определи, есть ли на фото обнажённая грудь, половые органы, "
@@ -113,9 +113,10 @@ async def cmd_start(message: Message, state: FSMContext):
     else:
         await message.answer(
             "✨ <b>Снова рад тебя видеть!</b>\n\n"
-            "Отправь своё фото, и я дам совет по стилю.\n"
-            "Можешь также задать текстовый вопрос о моде.\n\n"
-            "📸 <b>Жду фото или вопрос!</b>",
+            "📸 Отправь своё фото — я дам совет по стилю.\n"
+            "💬 Или задай текстовый вопрос о моде.\n\n"
+            "Бесплатно: 3 анализа + бонусы за приглашения.\n"
+            "Дополнительные анализы — 10₽ в профиле.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -138,7 +139,6 @@ async def process_style(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     style = message.text.split()[1]
     database.set_user_info(user_id, style=style)
-    # Приветственный бонус
     user = database.get_user(user_id)
     if not user.get("welcome_bonus_granted", False):
         new_bonus = user.get("bonus_requests", 0) + 1
@@ -235,12 +235,13 @@ async def cmd_referral(message: Message):
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     await message.answer(
-        "💡 <b>Как пользоваться</b>\n\n"
-        "1️⃣ Отправь фото – получи совет стилиста\n"
-        "2️⃣ Напиши вопрос о моде – отвечу текстом\n"
-        "3️⃣ Сохраняй советы в избранное\n"
-        "4️⃣ Приглашай друзей – получай бонусные анализы\n"
-        "5️⃣ Если бесплатные закончились – купи анализ за 10₽ в профиле\n\n"
+        "💡 <b>Что умеет этот бот</b>\n\n"
+        "✅ Анализировать твои фото и давать советы по стилю\n"
+        "✅ Отвечать на текстовые вопросы о моде\n"
+        "✅ Сохранять удачные советы в избранное\n"
+        "✅ Начислять бонусные анализы за приглашение друзей\n"
+        "✅ Продавать дополнительные анализы по 10₽\n\n"
+        "❌ Здесь нет гардероба, виртуальной примерки или интеграции с магазинами — это Telegram, а не полноценное приложение.\n\n"
         "<b>Команды:</b>\n"
         "/start — начать\n"
         "/profile — мой профиль\n"
@@ -355,7 +356,6 @@ async def handle_photo(message: Message, state: FSMContext):
         result_with_links = generate_affiliate_links(result)
         last_results_cache[user_id] = result_with_links
         await message.reply(result_with_links, reply_markup=get_result_keyboard(), parse_mode="HTML")
-        # Списываем запрос
         database.use_request(user_id)
     except Exception as e:
         logger.exception("Ошибка фото")
