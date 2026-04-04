@@ -58,8 +58,8 @@ def get_style_keyboard():
 def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
-        [KeyboardButton(text="💎 Премиум"), KeyboardButton(text="🔗 Рефералка")],
-        [KeyboardButton(text="💬 Спросить стилиста"), KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="🔗 Рефералка"), KeyboardButton(text="💬 Спросить стилиста")],
+        [KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -71,12 +71,12 @@ def get_result_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---- Проверка на безопасность (смягчённая) ----
+# ---- Проверка на безопасность (мягкая) ----
 async def check_image_safety(image_bytes: bytes) -> bool:
     moderation_prompt = (
         "Ты — модератор. Определи, есть ли на фото обнажённая грудь, половые органы, "
         "явные сексуальные действия или порнография. "
-        "Если на фото человек в обычной одежде (футболка, джинсы, платье, куртка и т.п.) — это безопасно. "
+        "Если на фото человек в обычной одежде, нижнем белье или купальнике — это безопасно. "
         "Ответь только одним словом: 'опасно' или 'безопасно'."
     )
     try:
@@ -84,7 +84,7 @@ async def check_image_safety(image_bytes: bytes) -> bool:
         return 'опасно' not in result.lower()
     except Exception as e:
         logger.error(f"Safety check failed: {e}")
-        return True  # в случае ошибки пропускаем
+        return True
 
 # ---- Обработчики команд ----
 @dp.message(CommandStart(deep_link=True))
@@ -138,6 +138,12 @@ async def process_style(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
     style = message.text.split()[1]
     database.set_user_info(user_id, style=style)
+    # Приветственный бонус
+    user = database.get_user(user_id)
+    if not user.get("welcome_bonus_granted", False):
+        new_bonus = user.get("bonus_requests", 0) + 1
+        database.update_user(user_id, {"bonus_requests": new_bonus, "welcome_bonus_granted": True})
+        await message.answer("🎁 В подарок вы получили +1 бесплатный анализ!")
     await state.clear()
     await message.answer(
         "Спасибо! Теперь отправь своё фото, и я дам совет.\n"
@@ -147,6 +153,12 @@ async def process_style(message: Message, state: FSMContext):
 
 @dp.message(ProfileStates.waiting_style, F.text == "⏩ Пропустить")
 async def skip_style(message: Message, state: FSMContext):
+    user_id = str(message.from_user.id)
+    user = database.get_user(user_id)
+    if not user.get("welcome_bonus_granted", False):
+        new_bonus = user.get("bonus_requests", 0) + 1
+        database.update_user(user_id, {"bonus_requests": new_bonus, "welcome_bonus_granted": True})
+        await message.answer("🎁 В подарок вы получили +1 бесплатный анализ!")
     await state.clear()
     await message.answer(
         "Хорошо! Отправь фото или задай вопрос.",
@@ -161,43 +173,51 @@ async def invalid_gender_input(message: Message):
 async def invalid_style_input(message: Message):
     await message.answer("Выбери стиль с помощью кнопок 👇", reply_markup=get_style_keyboard())
 
-# ---- Профиль, рефералка, премиум ----
+# ---- Профиль, рефералка, покупка ----
 @dp.message(Command("profile"))
 async def cmd_profile(message: Message):
     user_id = str(message.from_user.id)
     user = database.get_user(user_id)
-    used = user.get("total_free_requests", 0)
+    used_free = user.get("total_free_requests", 0)
     bonus = user.get("bonus_requests", 0)
-    free = max(0, 3 - used) + bonus
+    paid = user.get("paid_requests", 0)
+    remaining_free = max(0, 3 - used_free)
+    total_remaining = remaining_free + bonus + paid
     text = (
         f"👤 <b>Твой профиль</b>\n\n"
         f"• Пол: {user.get('gender', 'не указан')}\n"
         f"• Стиль: {user.get('style_preference', 'не указан')}\n"
-        f"• 📊 Бесплатных анализов осталось: {free}\n"
-        f"• 💎 Премиум: {'активна' if database.is_premium(user_id) else 'нет'}"
+        f"• 📊 Бесплатных анализов осталось: {remaining_free} (из 3)\n"
+        f"• 🎁 Бонусных анализов: {bonus}\n"
+        f"• 💰 Купленных анализов: {paid}\n"
+        f"• <b>Всего доступно анализов: {total_remaining}</b>\n\n"
+        f"Если закончились — купи дополнительный за 10₽."
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_profile")],
-        [InlineKeyboardButton(text="🔗 Реферальная ссылка", callback_data="show_referral")]
+        [InlineKeyboardButton(text="🔗 Реферальная ссылка", callback_data="show_referral")],
+        [InlineKeyboardButton(text="💸 Купить анализ (10₽)", callback_data="buy_analysis")]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
-@dp.message(Command("premium"))
-async def cmd_premium(message: Message):
-    user_id = str(message.from_user.id)
-    if database.is_premium(user_id):
-        await message.answer("✅ У вас активна премиум-подписка!", reply_markup=get_main_keyboard())
-    else:
-        used = database.get_user(user_id).get("total_free_requests", 0)
-        bonus = database.get_user(user_id).get("bonus_requests", 0)
-        remaining = max(0, 3 - used) + bonus
-        await message.answer(
-            f"🔓 Осталось <b>{remaining}</b> бесплатных анализов.\n\n"
-            "💎 <b>Премиум</b> — 299₽/мес, безлимит\n"
-            "Нажми «Премиум» в меню, чтобы оплатить.",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
+@dp.callback_query(lambda c: c.data == "buy_analysis")
+async def buy_analysis_callback(callback: CallbackQuery):
+    price_rub = 10
+    price_kopecks = price_rub * 100
+    provider_data = {"receipt": {"items": [{"description": "Один анализ стиля", "quantity": "1.00", "amount": {"value": f"{price_rub:.2f}", "currency": "RUB"}, "vat_code": 1}]}}
+    await bot.send_invoice(
+        chat_id=callback.from_user.id,
+        title="Один анализ стиля",
+        description="Платная консультация стилиста на основе вашего фото",
+        payload="single_analysis",
+        provider_token=YOOKASSA_PROVIDER_TOKEN,
+        currency="RUB",
+        prices=[LabeledPrice(label="1 анализ", amount=price_kopecks)],
+        need_email=True,
+        send_email_to_provider=True,
+        provider_data=json.dumps(provider_data)
+    )
+    await callback.answer()
 
 @dp.message(Command("referral"))
 async def cmd_referral(message: Message):
@@ -219,11 +239,11 @@ async def cmd_help(message: Message):
         "1️⃣ Отправь фото – получи совет стилиста\n"
         "2️⃣ Напиши вопрос о моде – отвечу текстом\n"
         "3️⃣ Сохраняй советы в избранное\n"
-        "4️⃣ Приглашай друзей – получай бонусы\n\n"
+        "4️⃣ Приглашай друзей – получай бонусные анализы\n"
+        "5️⃣ Если бесплатные закончились – купи анализ за 10₽ в профиле\n\n"
         "<b>Команды:</b>\n"
         "/start — начать\n"
         "/profile — мой профиль\n"
-        "/premium — подписка\n"
         "/referral — рефералка\n"
         "/favorites — избранное\n"
         "/help — помощь",
@@ -271,24 +291,6 @@ async def main_analyze(message: Message):
 async def main_profile(message: Message):
     await cmd_profile(message)
 
-@dp.message(F.text == "💎 Премиум")
-async def handle_premium_button(message: Message):
-    price_rub = 299
-    price_kopecks = price_rub * 100
-    provider_data = {"receipt": {"items": [{"description": "Премиум-подписка на 1 месяц", "quantity": "1.00", "amount": {"value": f"{price_rub:.2f}", "currency": "RUB"}, "vat_code": 1}]}}
-    await bot.send_invoice(
-        chat_id=message.chat.id,
-        title="Премиум-подписка",
-        description="Безлимитный доступ к анализу стиля на 1 месяц",
-        payload="premium_30d",
-        provider_token=YOOKASSA_PROVIDER_TOKEN,
-        currency="RUB",
-        prices=[LabeledPrice(label="1 месяц", amount=price_kopecks)],
-        need_email=True,
-        send_email_to_provider=True,
-        provider_data=json.dumps(provider_data)
-    )
-
 @dp.message(F.text == "🔗 Рефералка")
 async def main_referral(message: Message):
     await cmd_referral(message)
@@ -317,14 +319,13 @@ async def handle_photo(message: Message, state: FSMContext):
     if photo.file_size > 5 * 1024 * 1024:
         await message.reply("⚠️ Фото слишком большое (до 5 МБ).")
         return
-    if user_id != DEVELOPER_ID:
-        if not database.can_request(user_id):
-            await message.reply(
-                "❌ Лимит бесплатных анализов исчерпан.\n"
-                "Оформи премиум или пригласи друга по реферальной ссылке.",
-                reply_markup=get_main_keyboard()
-            )
-            return
+    if not database.can_request(user_id):
+        await message.reply(
+            "❌ У вас закончились бесплатные анализы.\n"
+            "Купите дополнительный за 10₽ в профиле (/profile) или пригласите друга по реферальной ссылке.",
+            reply_markup=get_main_keyboard()
+        )
+        return
     file = await bot.get_file(photo.file_id)
     file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
     await message.reply("🔍 Анализирую... пару секунд.", reply_markup=ReplyKeyboardRemove())
@@ -354,8 +355,8 @@ async def handle_photo(message: Message, state: FSMContext):
         result_with_links = generate_affiliate_links(result)
         last_results_cache[user_id] = result_with_links
         await message.reply(result_with_links, reply_markup=get_result_keyboard(), parse_mode="HTML")
-        if user_id != DEVELOPER_ID and not database.is_premium(user_id):
-            database.use_request(user_id)
+        # Списываем запрос
+        database.use_request(user_id)
     except Exception as e:
         logger.exception("Ошибка фото")
         await message.reply("❌ Не удалось проанализировать. Попробуй другое фото.", reply_markup=get_main_keyboard())
@@ -365,21 +366,20 @@ async def handle_photo(message: Message, state: FSMContext):
 async def handle_text(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "💎 Премиум", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь"]:
         return
     current_state = await state.get_state()
     if current_state is not None:
         await message.answer("Сначала заверши настройку профиля с помощью кнопок.")
         return
     user_id = str(message.from_user.id)
-    if user_id != DEVELOPER_ID:
-        if not database.can_request(user_id):
-            await message.reply(
-                "❌ Лимит бесплатных анализов исчерпан.\n"
-                "Оформи премиум или пригласи друга.",
-                reply_markup=get_main_keyboard()
-            )
-            return
+    if not database.can_request(user_id):
+        await message.reply(
+            "❌ У вас закончились бесплатные текстовые запросы.\n"
+            "Купите анализ или пригласите друга.",
+            reply_markup=get_main_keyboard()
+        )
+        return
     await message.reply("💭 Думаю...", reply_markup=ReplyKeyboardRemove())
     try:
         user = database.get_user(user_id)
@@ -392,8 +392,7 @@ async def handle_text(message: Message, state: FSMContext):
         )
         answer = await gemini.generate_text(message.text, system_prompt=text_prompt)
         await message.reply(answer, parse_mode="HTML", reply_markup=get_main_keyboard())
-        if user_id != DEVELOPER_ID and not database.is_premium(user_id):
-            database.use_request(user_id)
+        database.use_request(user_id)
     except Exception as e:
         logger.exception("Ошибка текста")
         await message.reply("❌ Не удалось обработать. Попробуй позже.", reply_markup=get_main_keyboard())
@@ -501,15 +500,16 @@ async def pre_checkout(query: PreCheckoutQuery):
 async def process_payment(message: Message):
     user_id = str(message.from_user.id)
     payload = message.successful_payment.invoice_payload
-    if payload == "premium_30d":
-        database.set_premium(user_id, duration_days=30)
+    if payload == "single_analysis":
+        database.add_paid_analysis(user_id)
         await message.answer(
-            "✅ Подписка активирована! Теперь безлимит. Спасибо! 🌟",
+            "✅ Оплата прошла успешно! Вам начислен 1 анализ.\n"
+            "Теперь можете отправить фото или текстовый вопрос.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
     else:
-        await message.answer("Ошибка оплаты.", reply_markup=get_main_keyboard())
+        await message.answer("Неизвестный тип платежа.", reply_markup=get_main_keyboard())
 
 # ---- Запуск ----
 async def main():
