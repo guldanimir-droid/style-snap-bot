@@ -71,20 +71,6 @@ def get_result_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---- Проверка на безопасность ----
-async def check_image_safety(image_bytes: bytes) -> bool:
-    moderation_prompt = (
-        "Ты — модератор. Определи, есть ли на фото обнажённые участки тела, "
-        "нижнее бельё, купальники, сексуальные позы или интимные сцены. "
-        "Ответь только одним словом: 'опасно' или 'безопасно'."
-    )
-    try:
-        result = await gemini.analyze_style(image_bytes, moderation_prompt)
-        return 'опасно' not in result.lower()
-    except Exception as e:
-        logger.error(f"Safety check failed: {e}")
-        return True
-
 # ---- Обработчики команд ----
 @dp.message(CommandStart(deep_link=True))
 async def cmd_start_with_ref(message: Message, command: CommandObject, state: FSMContext):
@@ -241,7 +227,6 @@ async def cmd_favorites(message: Message):
     for idx, fav in enumerate(favorites[:20], 1):
         short = fav['result_text'][:80] + "..." if len(fav['result_text']) > 80 else fav['result_text']
         text += f"{idx}. {short}\n"
-    # Кнопки удаления для каждого элемента
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"❌ Удалить #{fav['id']}", callback_data=f"del_fav_{fav['id']}")] for fav in favorites[:20]
     ])
@@ -254,7 +239,6 @@ async def delete_favorite_callback(callback: CallbackQuery):
     user_id = str(callback.from_user.id)
     database.delete_favorite(user_id, fav_id)
     await callback.answer("Удалено!")
-    # обновим сообщение
     await cmd_favorites(callback.message)
     await callback.message.delete()
 
@@ -336,13 +320,7 @@ async def handle_photo(message: Message, state: FSMContext):
                     await message.reply("❌ Не удалось загрузить фото.")
                     return
                 image_bytes = await resp.read()
-        if not await check_image_safety(image_bytes):
-            await message.reply(
-                "⚠️ Извините, я не анализирую фото с откровенным содержанием.\n"
-                "Отправьте фото в обычной одежде.",
-                reply_markup=get_main_keyboard()
-            )
-            return
+        # NSFW-проверка удалена
         user = database.get_user(user_id)
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
