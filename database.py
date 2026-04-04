@@ -25,31 +25,27 @@ def get_user(user_id: str):
         referral_code = generate_referral_code(user_id)
         supabase.table("users").insert({
             "user_id": user_id,
-            "requests_today": 0,
-            "last_request_date": str(date.today()),
             "gender": None,
             "style_preference": None,
-            "total_free_requests": 0,
-            "is_premium": False,
-            "premium_until": None,
+            "total_free_requests": 0,      # сколько использовано из 3 базовых
+            "bonus_requests": 0,           # бонусные (рефералы, приветственные)
+            "paid_requests": 0,            # купленные за деньги
             "referral_code": referral_code,
             "referred_by": None,
-            "bonus_requests": 0,
-            "welcome_bonus_granted": False
+            "welcome_bonus_granted": False,
+            "last_bonus_date": None        # не используется, но оставим
         }).execute()
         return {
             "user_id": user_id,
-            "requests_today": 0,
-            "last_request_date": str(date.today()),
             "gender": None,
             "style_preference": None,
             "total_free_requests": 0,
-            "is_premium": False,
-            "premium_until": None,
+            "bonus_requests": 0,
+            "paid_requests": 0,
             "referral_code": referral_code,
             "referred_by": None,
-            "bonus_requests": 0,
-            "welcome_bonus_granted": False
+            "welcome_bonus_granted": False,
+            "last_bonus_date": None
         }
 
 def update_user(user_id: str, data: dict):
@@ -57,41 +53,36 @@ def update_user(user_id: str, data: dict):
 
 def can_request(user_id: str) -> bool:
     user = get_user(user_id)
-    if user.get("is_premium"):
-        return True
-    used = user.get("total_free_requests", 0)
+    used_free = user.get("total_free_requests", 0)
     bonus = user.get("bonus_requests", 0)
-    return used < 3 + bonus
+    paid = user.get("paid_requests", 0)
+    # Доступно: неиспользованные бесплатные (3 - used_free) + бонусы + платные
+    remaining_free = max(0, 3 - used_free)
+    return (remaining_free + bonus + paid) > 0
 
 def use_request(user_id: str):
+    """Списывает один запрос в порядке: бонусы, потом платные, потом бесплатные."""
     user = get_user(user_id)
-    if user.get("is_premium"):
-        return
     bonus = user.get("bonus_requests", 0)
+    paid = user.get("paid_requests", 0)
+    used_free = user.get("total_free_requests", 0)
     if bonus > 0:
         update_user(user_id, {"bonus_requests": bonus - 1})
+    elif paid > 0:
+        update_user(user_id, {"paid_requests": paid - 1})
     else:
-        used = user.get("total_free_requests", 0)
-        update_user(user_id, {"total_free_requests": used + 1})
+        # списываем из бесплатных (но не более 3)
+        if used_free < 3:
+            update_user(user_id, {"total_free_requests": used_free + 1})
+        else:
+            # на всякий случай, хотя can_request не пропустит
+            pass
 
-def is_premium(user_id: str) -> bool:
+def add_paid_analysis(user_id: str):
+    """Начисляет 1 платный анализ после успешной оплаты."""
     user = get_user(user_id)
-    if not user.get("is_premium"):
-        return False
-    premium_until = user.get("premium_until")
-    if premium_until:
-        premium_until_dt = datetime.fromisoformat(premium_until.replace('Z', '+00:00'))
-        if premium_until_dt < datetime.now(timezone.utc):
-            update_user(user_id, {"is_premium": False, "premium_until": None})
-            return False
-    return True
-
-def set_premium(user_id: str, duration_days: int = 30):
-    premium_until = datetime.now(timezone.utc) + timedelta(days=duration_days)
-    update_user(user_id, {
-        "is_premium": True,
-        "premium_until": premium_until.isoformat()
-    })
+    current = user.get("paid_requests", 0)
+    update_user(user_id, {"paid_requests": current + 1})
 
 def set_user_info(user_id: str, gender: str = None, style: str = None):
     data = {}
@@ -118,20 +109,15 @@ def apply_referral(new_user_id: str, referrer_code: str):
     referrer_id = resp.data[0]["user_id"]
     if referrer_id == new_user_id:
         return False
-
     new_user = get_user(new_user_id)
     if new_user.get("referred_by"):
         return False
-
     update_user(new_user_id, {"referred_by": referrer_id})
-
     referrer = get_user(referrer_id)
     new_bonus_ref = referrer.get("bonus_requests", 0) + 1
     update_user(referrer_id, {"bonus_requests": new_bonus_ref})
-
     new_bonus_new = new_user.get("bonus_requests", 0) + 1
     update_user(new_user_id, {"bonus_requests": new_bonus_new})
-
     return True
 
 # ---- Избранное ----
@@ -147,19 +133,3 @@ def get_favorites(user_id: str):
 
 def delete_favorite(user_id: str, favorite_id: int):
     supabase.table("favorites").delete().eq("id", favorite_id).eq("user_id", user_id).execute()
-
-# ---- Гардероб ----
-def add_to_wardrobe(user_id: str, image_url: str, clothing_type: str, description: str):
-    supabase.table("wardrobe").insert({
-        "user_id": user_id,
-        "image_url": image_url,
-        "clothing_type": clothing_type,
-        "description": description
-    }).execute()
-
-def get_wardrobe(user_id: str):
-    response = supabase.table("wardrobe").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
-    return response.data
-
-def delete_from_wardrobe(item_id: int, user_id: str):
-    supabase.table("wardrobe").delete().eq("id", item_id).eq("user_id", user_id).execute()
