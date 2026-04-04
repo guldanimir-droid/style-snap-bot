@@ -15,8 +15,7 @@ from config import (
     SUPABASE_KEY,
     DEVELOPER_ID,
     GIGACHAT_CLIENT_ID,
-    GIGACHAT_SECRET,
-    YOOKASSA_PROVIDER_TOKEN
+    GIGACHAT_SECRET
 )
 
 from gigachat_client import GigaChatClientWrapper
@@ -116,7 +115,7 @@ async def cmd_start(message: Message, state: FSMContext):
             "📸 Отправь своё фото — я дам совет по стилю.\n"
             "💬 Или задай текстовый вопрос о моде.\n\n"
             "Бесплатно: 3 анализа + бонусы за приглашения.\n"
-            "Дополнительные анализы — 10₽ в меню.",
+            "Дополнительные анализы — 10⭐ в меню.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -191,12 +190,12 @@ async def cmd_profile(message: Message):
         f"• 🎁 Бонусных анализов: {bonus}\n"
         f"• 💰 Купленных анализов: {paid}\n"
         f"• <b>Всего доступно анализов: {total_remaining}</b>\n\n"
-        f"Если закончились — купи дополнительный за 10₽."
+        f"Если закончились — купи дополнительный за 10 Telegram Stars."
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_profile")],
         [InlineKeyboardButton(text="🔗 Реферальная ссылка", callback_data="show_referral")],
-        [InlineKeyboardButton(text="💸 Купить анализ (10₽)", callback_data="buy_analysis")]
+        [InlineKeyboardButton(text="💸 Купить анализ (10⭐)", callback_data="buy_analysis")]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -210,9 +209,9 @@ async def send_buy_invoice(chat_id: int):
         title="Анализ стиля",
         description="Один анализ вашего фото с рекомендациями стилиста",
         payload="single_analysis",
-        provider_token=YOOKASSA_PROVIDER_TOKEN,
-        currency="RUB",
-        prices=[LabeledPrice(label="1 анализ", amount=1000)],
+        provider_token="",          # для Stars оставляем пустым
+        currency="XTR",             # валюта Telegram Stars
+        prices=[LabeledPrice(label="1 анализ", amount=10)],  # 10 звезд
         start_parameter="buy_analysis"
     )
 
@@ -242,7 +241,7 @@ async def cmd_help(message: Message):
         "✅ Отвечать на текстовые вопросы о моде\n"
         "✅ Сохранять удачные советы в избранное\n"
         "✅ Начислять бонусные анализы за приглашение друзей\n"
-        "✅ Продавать дополнительные анализы по 10₽\n\n"
+        "✅ Продавать дополнительные анализы за Telegram Stars (10⭐)\n\n"
         "❌ Здесь нет гардероба, виртуальной примерки или интеграции с магазинами — это Telegram, а не полноценное приложение.\n\n"
         "<b>Команды:</b>\n"
         "/start — начать\n"
@@ -329,7 +328,7 @@ async def handle_photo(message: Message, state: FSMContext):
     if not database.can_request(user_id):
         await message.reply(
             "❌ У вас закончились бесплатные анализы.\n"
-            "Купите дополнительный за 10₽ в меню или в профиле.",
+            "Купите дополнительный за 10 Telegram Stars в меню или в профиле.",
             reply_markup=get_main_keyboard()
         )
         return
@@ -497,7 +496,7 @@ async def save_favorite_callback(callback: CallbackQuery):
     await callback.answer("Сохранено в избранное!")
     await callback.message.delete()
 
-# ---- Платежи ----
+# ---- Платежи через Telegram Stars ----
 @dp.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery):
     await bot.answer_pre_checkout_query(query.id, ok=True)
