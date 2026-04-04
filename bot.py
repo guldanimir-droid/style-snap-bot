@@ -59,7 +59,7 @@ def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="🔗 Рефералка"), KeyboardButton(text="💬 Спросить стилиста")],
-        [KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="💸 Купить анализ"), KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -116,7 +116,7 @@ async def cmd_start(message: Message, state: FSMContext):
             "📸 Отправь своё фото — я дам совет по стилю.\n"
             "💬 Или задай текстовый вопрос о моде.\n\n"
             "Бесплатно: 3 анализа + бонусы за приглашения.\n"
-            "Дополнительные анализы — 10₽ в профиле.",
+            "Дополнительные анализы — 10₽ в меню.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -200,13 +200,16 @@ async def cmd_profile(message: Message):
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
-@dp.callback_query(lambda c: c.data == "buy_analysis")
-async def buy_analysis_callback(callback: CallbackQuery):
+@dp.message(F.text == "💸 Купить анализ")
+async def buy_analysis_button(message: Message):
+    await send_buy_invoice(message.chat.id)
+
+async def send_buy_invoice(chat_id: int):
     price_rub = 10
     price_kopecks = price_rub * 100
     provider_data = {"receipt": {"items": [{"description": "Один анализ стиля", "quantity": "1.00", "amount": {"value": f"{price_rub:.2f}", "currency": "RUB"}, "vat_code": 1}]}}
     await bot.send_invoice(
-        chat_id=callback.from_user.id,
+        chat_id=chat_id,
         title="Один анализ стиля",
         description="Платная консультация стилиста на основе вашего фото",
         payload="single_analysis",
@@ -217,6 +220,10 @@ async def buy_analysis_callback(callback: CallbackQuery):
         send_email_to_provider=True,
         provider_data=json.dumps(provider_data)
     )
+
+@dp.callback_query(lambda c: c.data == "buy_analysis")
+async def buy_analysis_callback(callback: CallbackQuery):
+    await send_buy_invoice(callback.from_user.id)
     await callback.answer()
 
 @dp.message(Command("referral"))
@@ -305,6 +312,10 @@ async def ask_stylist(message: Message):
         reply_markup=ReplyKeyboardRemove()
     )
 
+@dp.message(F.text == "💸 Купить анализ")
+async def buy_analysis_button(message: Message):
+    await send_buy_invoice(message.chat.id)
+
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
     await cmd_help(message)
@@ -323,7 +334,7 @@ async def handle_photo(message: Message, state: FSMContext):
     if not database.can_request(user_id):
         await message.reply(
             "❌ У вас закончились бесплатные анализы.\n"
-            "Купите дополнительный за 10₽ в профиле (/profile) или пригласите друга по реферальной ссылке.",
+            "Купите дополнительный за 10₽ в меню или в профиле.",
             reply_markup=get_main_keyboard()
         )
         return
@@ -366,7 +377,7 @@ async def handle_photo(message: Message, state: FSMContext):
 async def handle_text(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "💸 Купить анализ", "❓ Помощь"]:
         return
     current_state = await state.get_state()
     if current_state is not None:
