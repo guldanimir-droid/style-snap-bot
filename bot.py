@@ -205,17 +205,14 @@ async def buy_analysis_button(message: Message):
     await send_buy_invoice(message.chat.id)
 
 async def send_buy_invoice(chat_id: int):
-    price_rub = 10
-    price_kopecks = price_rub * 100
     await bot.send_invoice(
         chat_id=chat_id,
-        title="Один анализ стиля",
-        description="Платная консультация стилиста на основе вашего фото",
+        title="Анализ стиля",
+        description="Один анализ вашего фото с рекомендациями стилиста",
         payload="single_analysis",
         provider_token=YOOKASSA_PROVIDER_TOKEN,
         currency="RUB",
-        prices=[LabeledPrice(label="1 анализ", amount=price_kopecks)],
-        need_email=False,
+        prices=[LabeledPrice(label="1 анализ", amount=1000)],
         start_parameter="buy_analysis"
     )
 
