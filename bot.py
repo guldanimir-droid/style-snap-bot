@@ -71,6 +71,21 @@ def get_result_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+# ---- Проверка на безопасность (смягчённая) ----
+async def check_image_safety(image_bytes: bytes) -> bool:
+    moderation_prompt = (
+        "Ты — модератор. Определи, есть ли на фото обнажённая грудь, половые органы, "
+        "явные сексуальные действия или порнография. "
+        "Если на фото человек в обычной одежде (футболка, джинсы, платье, куртка и т.п.) — это безопасно. "
+        "Ответь только одним словом: 'опасно' или 'безопасно'."
+    )
+    try:
+        result = await gemini.analyze_style(image_bytes, moderation_prompt)
+        return 'опасно' not in result.lower()
+    except Exception as e:
+        logger.error(f"Safety check failed: {e}")
+        return True  # в случае ошибки пропускаем
+
 # ---- Обработчики команд ----
 @dp.message(CommandStart(deep_link=True))
 async def cmd_start_with_ref(message: Message, command: CommandObject, state: FSMContext):
@@ -320,7 +335,13 @@ async def handle_photo(message: Message, state: FSMContext):
                     await message.reply("❌ Не удалось загрузить фото.")
                     return
                 image_bytes = await resp.read()
-        # NSFW-проверка удалена
+        if not await check_image_safety(image_bytes):
+            await message.reply(
+                "⚠️ Извините, я не анализирую фото с откровенным содержанием.\n"
+                "Отправьте фото в обычной одежде.",
+                reply_markup=get_main_keyboard()
+            )
+            return
         user = database.get_user(user_id)
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
