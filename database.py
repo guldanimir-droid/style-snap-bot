@@ -13,7 +13,6 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ---- Пользователи ----
 def generate_referral_code(user_id: str) -> str:
     return f"ref_{user_id}"
 
@@ -27,25 +26,35 @@ def get_user(user_id: str):
             "user_id": user_id,
             "gender": None,
             "style_preference": None,
-            "total_free_requests": 0,      # сколько использовано из 3 базовых
-            "bonus_requests": 0,           # бонусные (рефералы, приветственные)
-            "paid_requests": 0,            # купленные за деньги
-            "referral_code": referral_code,
-            "referred_by": None,
-            "welcome_bonus_granted": False,
-            "last_bonus_date": None        # не используется, но оставим
-        }).execute()
-        return {
-            "user_id": user_id,
-            "gender": None,
-            "style_preference": None,
+            "figure_type": None,
+            "color_type": None,
+            "budget": None,
+            "height": None,
+            "age": None,
+            "clothing_size": None,
             "total_free_requests": 0,
             "bonus_requests": 0,
             "paid_requests": 0,
             "referral_code": referral_code,
             "referred_by": None,
-            "welcome_bonus_granted": False,
-            "last_bonus_date": None
+            "welcome_bonus_granted": False
+        }).execute()
+        return {
+            "user_id": user_id,
+            "gender": None,
+            "style_preference": None,
+            "figure_type": None,
+            "color_type": None,
+            "budget": None,
+            "height": None,
+            "age": None,
+            "clothing_size": None,
+            "total_free_requests": 0,
+            "bonus_requests": 0,
+            "paid_requests": 0,
+            "referral_code": referral_code,
+            "referred_by": None,
+            "welcome_bonus_granted": False
         }
 
 def update_user(user_id: str, data: dict):
@@ -56,12 +65,10 @@ def can_request(user_id: str) -> bool:
     used_free = user.get("total_free_requests", 0)
     bonus = user.get("bonus_requests", 0)
     paid = user.get("paid_requests", 0)
-    # Доступно: неиспользованные бесплатные (3 - used_free) + бонусы + платные
     remaining_free = max(0, 3 - used_free)
     return (remaining_free + bonus + paid) > 0
 
 def use_request(user_id: str):
-    """Списывает один запрос в порядке: бонусы, потом платные, потом бесплатные."""
     user = get_user(user_id)
     bonus = user.get("bonus_requests", 0)
     paid = user.get("paid_requests", 0)
@@ -71,29 +78,17 @@ def use_request(user_id: str):
     elif paid > 0:
         update_user(user_id, {"paid_requests": paid - 1})
     else:
-        # списываем из бесплатных (но не более 3)
         if used_free < 3:
             update_user(user_id, {"total_free_requests": used_free + 1})
-        else:
-            # на всякий случай, хотя can_request не пропустит
-            pass
 
 def add_paid_analysis(user_id: str):
-    """Начисляет 1 платный анализ после успешной оплаты."""
     user = get_user(user_id)
     current = user.get("paid_requests", 0)
     update_user(user_id, {"paid_requests": current + 1})
 
-def set_user_info(user_id: str, gender: str = None, style: str = None):
-    data = {}
-    if gender is not None:
-        data["gender"] = gender
-    if style is not None:
-        data["style_preference"] = style
-    if data:
-        update_user(user_id, data)
+def set_user_info(user_id: str, **kwargs):
+    update_user(user_id, kwargs)
 
-# ---- Реферальная система ----
 def get_referral_link(user_id: str) -> str:
     user = get_user(user_id)
     code = user.get("referral_code")
@@ -120,7 +115,6 @@ def apply_referral(new_user_id: str, referrer_code: str):
     update_user(new_user_id, {"bonus_requests": new_bonus_new})
     return True
 
-# ---- Избранное ----
 def add_favorite(user_id: str, result_text: str):
     supabase.table("favorites").insert({
         "user_id": user_id,
