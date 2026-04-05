@@ -6,3 +6,6 @@ class ProfileStates(StatesGroup):
     waiting_figure = State()
     waiting_color = State()
     waiting_budget = State()
+    waiting_height = State()
+    waiting_age = State()
+    waiting_size = State()
