@@ -2,6 +2,7 @@ import asyncio
 import logging
 import aiohttp
 import json
+import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command, CommandStart, CommandObject
@@ -25,6 +26,9 @@ import database
 import image_utils
 from cache import last_results_cache
 from states import ProfileStates
+
+# Импорт для поиска товаров
+from takprodam import search_products
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -240,7 +244,7 @@ async def skip_size(message: Message, state: FSMContext):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Профиль (отображаем все данные) ----
+# ---- Профиль ----
 @dp.message(Command("profile"))
 async def cmd_profile(message: Message):
     user_id = str(message.from_user.id)
@@ -255,7 +259,6 @@ async def cmd_profile(message: Message):
         f"• Пол: {user.get('gender', 'не указан')}\n"
         f"• Стиль: {user.get('style_preference', 'не указан')}\n"
         f"• Тип фигуры: {user.get('figure_type', 'не указан')}\n"
-        f"• Цветотип: {user.get('color_type', 'не указан')}\n"
         f"• Бюджет: {user.get('budget', 'не указан')}\n"
         f"• Рост: {user.get('height', 'не указан')} см\n"
         f"• Возраст: {user.get('age', 'не указан')}\n"
@@ -275,7 +278,6 @@ async def cmd_profile(message: Message):
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
-# ---- Редактирование анкеты (вызов начала опроса) ----
 @dp.callback_query(lambda c: c.data == "edit_anketa")
 async def edit_anketa_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ProfileStates.waiting_gender)
@@ -294,7 +296,6 @@ async def show_referral_callback(callback: CallbackQuery):
     await callback.answer()
     await callback.message.delete()
 
-# ---- Рефералка ----
 @dp.message(Command("referral"))
 async def cmd_referral(message: Message):
     user_id = str(message.from_user.id)
@@ -308,7 +309,6 @@ async def cmd_referral(message: Message):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Помощь ----
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     await message.answer(
@@ -318,18 +318,41 @@ async def cmd_help(message: Message):
         "✅ Сохранять удачные советы в избранное\n"
         "✅ Начислять бонусные анализы за приглашение друзей\n"
         "✅ Продавать дополнительные анализы за Telegram Stars\n"
-        "✅ Учитывать твой тип фигуры, цветотип, бюджет, рост, возраст, размер\n\n"
+        "✅ Учитывать твой тип фигуры, бюджет, рост, возраст, размер\n"
+        "✅ Находить товары на маркетплейсах через команду /search\n\n"
         "<b>Команды:</b>\n"
         "/start — начать\n"
         "/profile — мой профиль\n"
         "/referral — рефералка\n"
         "/favorites — избранное\n"
+        "/search — найти товары\n"
         "/help — помощь",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
 
-# ---- Избранное (упрощённое) ----
+# ---- Команда поиска товаров через Takprodam ----
+@dp.message(Command("search"))
+async def search_command(message: Message):
+    query = message.text.replace("/search", "").strip()
+    if not query:
+        await message.answer("🔍 Напишите, что хотите найти. Например: `/search джинсы`", parse_mode="Markdown")
+        return
+    token = os.getenv("TAKPRODAM_API_TOKEN")
+    if not token:
+        await message.answer("🔧 Сервис поиска временно недоступен. Попробуйте позже.")
+        return
+    loading = await message.answer("🔍 Ищу товары...")
+    products = search_products(query, token, limit=5)
+    if not products:
+        await loading.edit_text(f"😔 По запросу «{query}» ничего не найдено.")
+        return
+    text = f"🔎 *Результаты по запросу «{query}»:*\n\n"
+    for p in products:
+        text += f"• [{p['name']}]({p['link']})\n"
+    await loading.edit_text(text, parse_mode="Markdown", disable_web_page_preview=True)
+
+# ---- Избранное ----
 @dp.message(Command("favorites"))
 async def cmd_favorites(message: Message):
     user_id = str(message.from_user.id)
@@ -471,11 +494,9 @@ async def handle_photo(message: Message, state: FSMContext):
             )
             return
         user = database.get_user(user_id)
-        # Собираем все параметры для персонализации
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
         figure = user.get("figure_type", "")
-        color = user.get("color_type", "")
         budget = user.get("budget", "")
         height = user.get("height", "")
         age = user.get("age", "")
@@ -487,8 +508,6 @@ async def handle_photo(message: Message, state: FSMContext):
             personal_prompt += f"\nПредпочитаемый стиль: {style}."
         if figure:
             personal_prompt += f"\nТип фигуры: {figure}."
-        if color:
-            personal_prompt += f"\nЦветотип: {color}."
         if budget:
             personal_prompt += f"\nБюджет: {budget}."
         if height:
@@ -498,7 +517,7 @@ async def handle_photo(message: Message, state: FSMContext):
         if size:
             personal_prompt += f"\nРазмер одежды: {size}."
         result = await gemini.analyze_style(image_bytes, personal_prompt)
-        result_with_links = generate_affiliate_links(result)
+        result_with_links = generate_affiliate_links(result)  # теперь добавляет ссылки
         last_results_cache[user_id] = result_with_links
         await message.reply(result_with_links, reply_markup=get_result_keyboard(), parse_mode="HTML")
         database.use_request(user_id)
@@ -531,7 +550,6 @@ async def handle_text(message: Message, state: FSMContext):
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
         figure = user.get("figure_type", "")
-        color = user.get("color_type", "")
         budget = user.get("budget", "")
         height = user.get("height", "")
         age = user.get("age", "")
@@ -542,13 +560,13 @@ async def handle_text(message: Message, state: FSMContext):
             f"Пользователь: {gender if gender else 'не указан'}, стиль: {style if style else 'не указан'}."
         )
         if figure: text_prompt += f"\nТип фигуры: {figure}."
-        if color: text_prompt += f"\nЦветотип: {color}."
         if budget: text_prompt += f"\nБюджет: {budget}."
         if height: text_prompt += f"\nРост: {height} см."
         if age: text_prompt += f"\nВозраст: {age}."
         if size: text_prompt += f"\nРазмер одежды: {size}."
         answer = await gemini.generate_text(message.text, system_prompt=text_prompt)
-        await message.reply(answer, parse_mode="HTML", reply_markup=get_main_keyboard())
+        answer_with_links = generate_affiliate_links(answer)  # тоже добавляем ссылки
+        await message.reply(answer_with_links, parse_mode="HTML", reply_markup=get_main_keyboard())
         database.use_request(user_id)
     except Exception as e:
         logger.exception("Ошибка текста")
