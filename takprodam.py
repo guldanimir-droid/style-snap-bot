@@ -1,5 +1,6 @@
 import requests
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,8 @@ def search_products(query: str, token: str, limit: int = 5):
     }
     try:
         resp = requests.get(TAKPRODAM_API_URL, headers=headers, params=params, timeout=10)
+        logger.info(f"Takprodam API status: {resp.status_code}")
+        logger.info(f"Takprodam API response: {resp.text[:200]}")
         resp.raise_for_status()
         data = resp.json()
         items = data.get('items', [])
