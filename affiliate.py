@@ -1,7 +1,7 @@
 import re
 import os
 import logging
-from takprodam import search_products
+from admitad import get_admitad_token, generate_admitad_link
 
 logger = logging.getLogger(__name__)
 
@@ -28,22 +28,29 @@ CLOTHING_KEYWORDS = {
     "перчатки": "перчатки"
 }
 
+# Для примера: Wildberries (c_id нужно узнать в Admitad)
+WB_C_ID = "ваш_c_id_для_wildberries"   # замените
+OZON_C_ID = "ваш_c_id_для_ozon"        # замените
+W_ID = "ваш_w_id_площадки"             # замените
+
 def generate_affiliate_links(advice_text: str) -> str:
-    token = os.getenv("TAKPRODAM_API_TOKEN")
+    token = get_admitad_token()
     if not token:
-        return advice_text + "\n\n⚠️ Сервис поиска товаров временно недоступен."
-    
+        return advice_text + "\n\n⚠️ Партнёрские ссылки временно недоступны."
+
     sentences = advice_text.split('. ')
     new_sentences = []
     for sentence in sentences:
         new_sentence = sentence
         for keyword, search_term in CLOTHING_KEYWORDS.items():
             if keyword in sentence.lower():
-                products = search_products(search_term, token, limit=1)
-                if products:
-                    link = products[0]['link']
-                    if link not in new_sentence:
-                        new_sentence += f" [Купить на WB]({link})"
+                # Здесь нужно сформировать URL товара на маркетплейсе.
+                # В реальности вы должны получить ссылку на товар из поиска или базы.
+                # Для примера используем шаблон поиска Wildberries.
+                product_url = f"https://www.wildberries.ru/catalog/0/search.aspx?search={search_term.replace(' ', '%20')}"
+                link = generate_admitad_link(product_url, W_ID, WB_C_ID, token)
+                if link:
+                    new_sentence += f" [Купить на WB]({link})"
                 break
         new_sentences.append(new_sentence)
     result = '. '.join(new_sentences)
