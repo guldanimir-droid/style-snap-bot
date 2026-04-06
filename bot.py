@@ -3,6 +3,7 @@ import logging
 import aiohttp
 import json
 import os
+import time
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command, CommandStart, CommandObject
@@ -21,12 +22,13 @@ from config import (
 
 from gigachat_client import GigaChatClientWrapper
 from prompts import SYSTEM_PROMPT
-from affiliate import add_product_links, extract_keywords
-from takprodam import search_products
+from affiliate import generate_affiliate_links  # если используете
+from takprodam import search_products  # если используете
 import database
 import image_utils
 from cache import last_results_cache
 from states import ProfileStates
+from robokassa import generate_payment_link
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -40,7 +42,7 @@ gemini = GigaChatClientWrapper(
     client_secret=GIGACHAT_SECRET
 )
 
-# ---- Клавиатуры ----
+# ---- Клавиатуры (главное меню без Stars) ----
 def get_gender_keyboard():
     kb = [[KeyboardButton(text="👩 Девушка"), KeyboardButton(text="👨 Парень")],[KeyboardButton(text="⏩ Пропустить")]]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
@@ -65,7 +67,7 @@ def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="🔗 Рефералка"), KeyboardButton(text="💬 Спросить стилиста")],
-        [KeyboardButton(text="🔍 Найти товары"), KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -78,7 +80,7 @@ def get_result_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---- Проверка на безопасность ----
+# ---- Проверка на безопасность (оставляем) ----
 async def check_image_safety(image_bytes: bytes) -> bool:
     moderation_prompt = (
         "Ты — модератор. Определи, есть ли на фото обнажённая грудь, половые органы, "
@@ -93,7 +95,7 @@ async def check_image_safety(image_bytes: bytes) -> bool:
         logger.error(f"Safety check failed: {e}")
         return True
 
-# ---- Обработчики команд ----
+# ---- Обработчики команд (start, анкета, профиль) ----
 @dp.message(CommandStart(deep_link=True))
 async def cmd_start_with_ref(message: Message, command: CommandObject, state: FSMContext):
     user_id = str(message.from_user.id)
@@ -123,7 +125,7 @@ async def cmd_start(message: Message, state: FSMContext):
             "📸 Отправь своё фото — я дам совет по стилю.\n"
             "💬 Или задай текстовый вопрос о моде.\n\n"
             "Бесплатно: 3 анализа + бонусы за приглашения.\n"
-            "Дополнительные анализы можно купить в профиле за Telegram Stars.",
+            "Дополнительные анализы можно купить в профиле за рубли.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -243,7 +245,7 @@ async def skip_size(message: Message, state: FSMContext):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Профиль ----
+# ---- Профиль (с рублёвыми пакетами) ----
 @dp.message(Command("profile"))
 async def cmd_profile(message: Message):
     user_id = str(message.from_user.id)
@@ -266,16 +268,63 @@ async def cmd_profile(message: Message):
         f"🎁 Бонусных анализов: {bonus}\n"
         f"💰 Купленных анализов: {paid}\n"
         f"• <b>Всего доступно анализов: {total_remaining}</b>\n\n"
-        f"Пополнить баланс анализов можно Telegram Stars."
+        f"Пополнить баланс анализов можно за рубли:"
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Редактировать анкету", callback_data="edit_anketa")],
         [InlineKeyboardButton(text="🔗 Реферальная ссылка", callback_data="show_referral")],
-        [InlineKeyboardButton(text="⭐ 1 анализ — 25 Stars", callback_data="buy_1")],
-        [InlineKeyboardButton(text="⭐ 3 анализа — 60 Stars", callback_data="buy_3")],
-        [InlineKeyboardButton(text="⭐ 5 анализов — 90 Stars", callback_data="buy_5")]
+        [InlineKeyboardButton(text="💎 1 анализ — 25 ₽", callback_data="buy_1_rub")],
+        [InlineKeyboardButton(text="💎 3 анализа — 50 ₽", callback_data="buy_3_rub")],
+        [InlineKeyboardButton(text="💎 5 анализов — 75 ₽", callback_data="buy_5_rub")],
+        [InlineKeyboardButton(text="💎 Подписка (месяц) — 500 ₽", callback_data="buy_subscribe")]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+# ---- Обработчики покупки через Robokassa ----
+@dp.callback_query(lambda c: c.data == "buy_1_rub")
+async def buy_1_rub(callback: CallbackQuery):
+    invoice_id = int(time.time())  # уникальный ID счёта
+    link = await generate_payment_link(callback.from_user.id, 25.0, "1 анализ стиля", invoice_id)
+    await callback.message.answer(
+        f"💳 Для оплаты 1 анализа (25 ₽) перейдите по ссылке:\n{link}\n\n"
+        "После оплаты нажмите /check_payment, чтобы зачислить анализы.\n"
+        "В ближайшее время будет настроена автоматическая проверка.",
+        disable_web_page_preview=True
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "buy_3_rub")
+async def buy_3_rub(callback: CallbackQuery):
+    invoice_id = int(time.time())
+    link = await generate_payment_link(callback.from_user.id, 50.0, "3 анализа стиля", invoice_id)
+    await callback.message.answer(
+        f"💳 Для оплаты 3 анализов (50 ₽) перейдите по ссылке:\n{link}\n\n"
+        "После оплаты нажмите /check_payment, чтобы зачислить анализы.",
+        disable_web_page_preview=True
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "buy_5_rub")
+async def buy_5_rub(callback: CallbackQuery):
+    invoice_id = int(time.time())
+    link = await generate_payment_link(callback.from_user.id, 75.0, "5 анализов стиля", invoice_id)
+    await callback.message.answer(
+        f"💳 Для оплаты 5 анализов (75 ₽) перейдите по ссылке:\n{link}\n\n"
+        "После оплаты нажмите /check_payment, чтобы зачислить анализы.",
+        disable_web_page_preview=True
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "buy_subscribe")
+async def buy_subscribe(callback: CallbackQuery):
+    invoice_id = int(time.time())
+    link = await generate_payment_link(callback.from_user.id, 500.0, "Месячная подписка на анализы стиля", invoice_id)
+    await callback.message.answer(
+        f"💳 Для оформления подписки (500 ₽/мес) перейдите по ссылке:\n{link}\n\n"
+        "После оплаты подписка активируется вручную (напишите /help).",
+        disable_web_page_preview=True
+    )
+    await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "edit_anketa")
 async def edit_anketa_callback(callback: CallbackQuery, state: FSMContext):
@@ -318,50 +367,30 @@ async def cmd_help(message: Message):
         "✅ Отвечать на текстовые вопросы о моде\n"
         "✅ Сохранять удачные советы в избранное\n"
         "✅ Начислять бонусные анализы за приглашение друзей\n"
-        "✅ Продавать дополнительные анализы за Telegram Stars\n"
-        "✅ Учитывать твой тип фигуры, бюджет, рост, возраст, размер\n"
-        "✅ Искать товары на маркетплейсах (кнопка «Найти товары» или /search)\n\n"
+        "✅ Продавать дополнительные анализы за рубли (Robokassa)\n"
+        "✅ Учитывать твой тип фигуры, бюджет, рост, возраст, размер\n\n"
         "<b>Команды:</b>\n"
         "/start — начать\n"
         "/profile — мой профиль\n"
         "/referral — рефералка\n"
         "/favorites — избранное\n"
-        "/search — найти товары\n"
+        "/unsubscribe — отменить подписку\n"
         "/help — помощь",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
 
-# ---- Поиск товаров ----
-@dp.message(Command("search"))
-async def search_command(message: Message):
-    query = message.text.replace("/search", "").strip()
-    if not query:
-        await message.answer("🔍 Напишите, что хотите найти. Например: `/search джинсы`", parse_mode="Markdown")
-        return
-    token = os.getenv("TAKPRODAM_API_TOKEN")
-    if not token:
-        await message.answer("🔧 Сервис поиска временно недоступен. Попробуйте позже.")
-        return
-    loading = await message.answer("🔍 Ищу товары...")
-    products = search_products(query, token, limit=5)
-    if not products:
-        await loading.edit_text(f"😔 По запросу «{query}» ничего не найдено.")
-        return
-    text = f"🔎 *Результаты по запросу «{query}»:*\n\n"
-    for p in products:
-        text += f"• [{p['name']}]({p['link']})\n"
-    await loading.edit_text(text, parse_mode="Markdown", disable_web_page_preview=True)
-
-@dp.message(F.text == "🔍 Найти товары")
-async def search_products_button(message: Message):
+@dp.message(Command("unsubscribe"))
+async def cmd_unsubscribe(message: Message):
+    user_id = str(message.from_user.id)
+    # Здесь нужно будет проверить, есть ли у пользователя активная подписка в БД,
+    # и отключить её. Пока заглушка.
     await message.answer(
-        "🔍 Введите название товара, который хотите найти.\n"
-        "Например: джинсы, футболка, платье",
-        reply_markup=ReplyKeyboardRemove()
+        "❓ Функция отмены подписки в разработке. Пока обратитесь к разработчику через /help.",
+        reply_markup=get_main_keyboard()
     )
 
-# ---- Избранное ----
+# ---- Избранное (упрощённое) ----
 @dp.message(Command("favorites"))
 async def cmd_favorites(message: Message):
     user_id = str(message.from_user.id)
@@ -415,67 +444,11 @@ async def ask_stylist(message: Message):
         reply_markup=ReplyKeyboardRemove()
     )
 
-@dp.message(F.text == "🔍 Найти товары")
-async def search_products_button(message: Message):
-    await message.answer(
-        "🔍 Введите название товара, который хотите найти.\n"
-        "Например: джинсы, футболка, платье",
-        reply_markup=ReplyKeyboardRemove()
-    )
-
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
     await cmd_help(message)
 
-# ---- Платежи ----
-async def send_package_invoice(chat_id: int, amount: int, stars: int, package_name: str):
-    await bot.send_invoice(
-        chat_id=chat_id,
-        title=package_name,
-        description=f"Купить {amount} анализов стиля за {stars} Telegram Stars",
-        payload=f"package_{amount}",
-        provider_token="",
-        currency="XTR",
-        prices=[LabeledPrice(label=f"{amount} анализов", amount=stars)],
-        start_parameter=f"buy_{amount}"
-    )
-
-@dp.callback_query(lambda c: c.data == "buy_1")
-async def buy_1_analysis(callback: CallbackQuery):
-    await send_package_invoice(callback.from_user.id, 1, 25, "1 анализ стиля")
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "buy_3")
-async def buy_3_analysis(callback: CallbackQuery):
-    await send_package_invoice(callback.from_user.id, 3, 60, "3 анализа стиля")
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "buy_5")
-async def buy_5_analysis(callback: CallbackQuery):
-    await send_package_invoice(callback.from_user.id, 5, 90, "5 анализов стиля")
-    await callback.answer()
-
-@dp.pre_checkout_query()
-async def pre_checkout(query: PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(query.id, ok=True)
-
-@dp.message(F.successful_payment)
-async def process_payment(message: Message):
-    user_id = str(message.from_user.id)
-    payload = message.successful_payment.invoice_payload
-    if payload.startswith("package_"):
-        amount = int(payload.split("_")[1])
-        for _ in range(amount):
-            database.add_paid_analysis(user_id)
-        await message.answer(
-            f"✅ Оплата прошла успешно! Вам начислено {amount} анализов.",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-    else:
-        await message.answer("Неизвестный тип платежа.", reply_markup=get_main_keyboard())
-
-# ---- Обработчик фото ----
+# ---- Обработчик фото (оставляем без изменений) ----
 @dp.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
     current_state = await state.get_state()
@@ -489,7 +462,7 @@ async def handle_photo(message: Message, state: FSMContext):
     if not database.can_request(user_id):
         await message.reply(
             "❌ У вас закончились бесплатные анализы.\n"
-            "Купите пакет анализов в профиле за Telegram Stars.",
+            "Купите пакет анализов в профиле за рубли.",
             reply_markup=get_main_keyboard()
         )
         return
@@ -537,8 +510,9 @@ async def handle_photo(message: Message, state: FSMContext):
         if size:
             personal_prompt += f"\nРазмер одежды: {size}."
         result = await gemini.analyze_style(image_bytes, personal_prompt)
-        # Добавляем ссылки на товары
-        result_with_links = await add_product_links(result)
+        # Если используете affiliate, можно добавить ссылки
+        # result_with_links = generate_affiliate_links(result)  # раскомментировать при наличии
+        result_with_links = result
         last_results_cache[user_id] = result_with_links
         await message.reply(result_with_links, reply_markup=get_result_keyboard(), parse_mode="HTML")
         database.use_request(user_id)
@@ -546,73 +520,53 @@ async def handle_photo(message: Message, state: FSMContext):
         logger.exception("Ошибка фото")
         await message.reply("❌ Не удалось проанализировать. Попробуй другое фото.", reply_markup=get_main_keyboard())
 
-# ---- Обработчик текста (включая поиск после нажатия кнопки) ----
+# ---- Обработчик текста (оставляем) ----
 @dp.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "🔍 Найти товары", "❓ Помощь"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь"]:
         return
-
     current_state = await state.get_state()
     if current_state is not None:
         await message.answer("Сначала заверши настройку профиля с помощью кнопок.")
         return
-
-    # Если текст выглядит как вопрос (длинный или содержит вопросительные слова) — отвечаем как стилист
-    lower_text = message.text.lower()
-    if len(message.text) > 50 or any(word in lower_text for word in ["как", "что", "почему", "помоги", "подскажи", "?"]):
-        user_id = str(message.from_user.id)
-        if not database.can_request(user_id):
-            await message.reply(
-                "❌ У вас закончились бесплатные текстовые запросы.\n"
-                "Купите анализ или пригласите друга.",
-                reply_markup=get_main_keyboard()
-            )
-            return
-        await message.reply("💭 Думаю...", reply_markup=ReplyKeyboardRemove())
-        try:
-            user = database.get_user(user_id)
-            gender = user.get("gender", "")
-            style = user.get("style_preference", "")
-            figure = user.get("figure_type", "")
-            color = user.get("color_type", "")
-            budget = user.get("budget", "")
-            height = user.get("height", "")
-            age = user.get("age", "")
-            size = user.get("clothing_size", "")
-            text_prompt = (
-                "Ты — профессиональный стилист-мужчина. Отвечай дружелюбно, по-русски, используй мужской род. "
-                "Обращайся на «ты». Учитывай российский контекст (WB/Ozon).\n\n"
-                f"Пользователь: {gender if gender else 'не указан'}, стиль: {style if style else 'не указан'}."
-            )
-            if figure: text_prompt += f"\nТип фигуры: {figure}."
-            if color: text_prompt += f"\nЦветотип: {color}."
-            if budget: text_prompt += f"\nБюджет: {budget}."
-            if height: text_prompt += f"\nРост: {height} см."
-            if age: text_prompt += f"\nВозраст: {age}."
-            if size: text_prompt += f"\nРазмер одежды: {size}."
-            answer = await gemini.generate_text(message.text, system_prompt=text_prompt)
-            await message.reply(answer, parse_mode="HTML", reply_markup=get_main_keyboard())
-            database.use_request(user_id)
-        except Exception as e:
-            logger.exception("Ошибка текста")
-            await message.reply("❌ Не удалось обработать. Попробуй позже.", reply_markup=get_main_keyboard())
-    else:
-        # Поиск товаров
-        token = os.getenv("TAKPRODAM_API_TOKEN")
-        if not token:
-            await message.answer("🔧 Сервис поиска временно недоступен. Попробуйте позже.", reply_markup=get_main_keyboard())
-            return
-        loading = await message.answer("🔍 Ищу товары...")
-        products = search_products(message.text, token, limit=5)
-        if not products:
-            await loading.edit_text(f"😔 По запросу «{message.text}» ничего не найдено.")
-            return
-        text = f"🔎 *Результаты по запросу «{message.text}»:*\n\n"
-        for p in products:
-            text += f"• [{p['name']}]({p['link']})\n"
-        await loading.edit_text(text, parse_mode="Markdown", disable_web_page_preview=True)
+    user_id = str(message.from_user.id)
+    if not database.can_request(user_id):
+        await message.reply(
+            "❌ У вас закончились бесплатные текстовые запросы.\n"
+            "Купите анализ или пригласите друга.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    await message.reply("💭 Думаю...", reply_markup=ReplyKeyboardRemove())
+    try:
+        user = database.get_user(user_id)
+        gender = user.get("gender", "")
+        style = user.get("style_preference", "")
+        figure = user.get("figure_type", "")
+        color = user.get("color_type", "")
+        budget = user.get("budget", "")
+        height = user.get("height", "")
+        age = user.get("age", "")
+        size = user.get("clothing_size", "")
+        text_prompt = (
+            "Ты — профессиональный стилист-мужчина. Отвечай дружелюбно, по-русски, используй мужской род. "
+            "Обращайся на «ты». Учитывай российский контекст (WB/Ozon).\n\n"
+            f"Пользователь: {gender if gender else 'не указан'}, стиль: {style if style else 'не указан'}."
+        )
+        if figure: text_prompt += f"\nТип фигуры: {figure}."
+        if color: text_prompt += f"\nЦветотип: {color}."
+        if budget: text_prompt += f"\nБюджет: {budget}."
+        if height: text_prompt += f"\nРост: {height} см."
+        if age: text_prompt += f"\nВозраст: {age}."
+        if size: text_prompt += f"\nРазмер одежды: {size}."
+        answer = await gemini.generate_text(message.text, system_prompt=text_prompt)
+        await message.reply(answer, parse_mode="HTML", reply_markup=get_main_keyboard())
+        database.use_request(user_id)
+    except Exception as e:
+        logger.exception("Ошибка текста")
+        await message.reply("❌ Не удалось обработать. Попробуй позже.", reply_markup=get_main_keyboard())
 
 # ---- Кнопки результата ----
 @dp.callback_query(lambda c: c.data == "more_advice")
@@ -655,25 +609,11 @@ async def find_similar_callback(callback: CallbackQuery):
     if not result:
         await callback.answer("Нет последнего анализа. Отправьте фото.", show_alert=True)
         return
-    keywords = extract_keywords(result)
-    if not keywords:
-        await callback.answer("Не удалось определить, что искать.", show_alert=True)
-        return
-    token = os.getenv("TAKPRODAM_API_TOKEN")
-    if not token:
-        await callback.answer("Поиск временно недоступен.", show_alert=True)
-        return
-    await callback.answer("Ищу товары...")
-    products_text = "🔍 **Похожие товары:**\n"
-    for kw in keywords[:2]:
-        prods = search_products(kw, token, limit=2)
-        if prods:
-            for p in prods:
-                products_text += f"\n• [{p['name']}]({p['link']})"
-        else:
-            products_text += f"\n• {kw} — не найдено"
-    await callback.message.answer(products_text, parse_mode="Markdown", disable_web_page_preview=True)
-    await callback.answer()
+    # Если используете Takprodam, раскомментировать
+    # from affiliate import extract_keywords
+    # keywords = extract_keywords(result)
+    # ... поиск товаров
+    await callback.answer("Функция поиска товаров временно отключена при переходе на рубли.", show_alert=True)
 
 # ---- Запуск ----
 async def main():
