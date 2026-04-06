@@ -1,59 +1,65 @@
 import re
-import random
+import os
+import requests
+import logging
 
-# Словарь ключевых слов и соответствующих запросов для поиска
-# (можно расширять)
-CLOTHING_KEYWORDS = {
-    "футболка": "футболка",
-    "рубашка": "рубашка",
-    "свитер": "свитер",
-    "водолазка": "водолазка",
-    "джинсы": "джинсы",
-    "брюки": "брюки",
-    "шорты": "шорты",
-    "юбка": "юбка",
-    "платье": "платье",
-    "куртка": "куртка",
-    "пальто": "пальто",
-    "кепка": "кепка",
-    "обувь": "обувь",
-    "кроссовки": "кроссовки",
-    "лоферы": "лоферы",
-    "туфли": "туфли",
-    "сумка": "сумка",
-    "шарф": "шарф",
-    "шапка": "шапка",
-    "перчатки": "перчатки"
-}
+logger = logging.getLogger(__name__)
+
+TAKPRODAM_API_URL = "https://api.takprodam.ru/v2/publisher/product"
+
+def search_product(query: str, token: str):
+    """Ищет первый подходящий товар по запросу и возвращает (название, ссылка) или (None, None)."""
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json"
+    }
+    params = {
+        "search": query,
+        "limit": 1
+    }
+    try:
+        resp = requests.get(TAKPRODAM_API_URL, headers=headers, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get('items', [])
+        if items:
+            item = items[0]
+            return item.get('name'), item.get('link')
+    except Exception as e:
+        logger.error(f"Ошибка поиска товара '{query}' в Takprodam: {e}")
+    return None, None
 
 def generate_affiliate_links(advice_text: str) -> str:
     """
-    Добавляет в текст ссылки на маркетплейсы для найденных предметов одежды.
+    Анализирует текст совета, ищет ключевые слова (названия вещей) и добавляет
+    партнёрские ссылки на найденные товары через Takprodam.
     """
-    # Разбиваем текст на предложения (по точкам)
-    sentences = advice_text.split('. ')
-    new_sentences = []
-    
-    for sentence in sentences:
-        new_sentence = sentence
-        # Ищем в предложении ключевые слова
-        for keyword, search_term in CLOTHING_KEYWORDS.items():
-            if keyword in sentence.lower():
-                # Генерируем ссылку на Wildberries (можно заменить на Ozon)
-                # Кодируем запрос для URL
-                encoded_query = search_term.replace(' ', '%20')
-                wb_url = f"https://www.wildberries.ru/catalog/0/search.aspx?search={encoded_query}"
-                # Добавляем ссылку в конец предложения (если ещё не добавлена)
-                if wb_url not in new_sentence:
-                    # Добавляем ссылку аккуратно
-                    new_sentence += f" [Найти на Wildberries]({wb_url})"
-                break  # достаточно одной ссылки на предложение
-        new_sentences.append(new_sentence)
-    
-    result = '. '.join(new_sentences)
-    # Если ссылки не добавились (например, нет ключевых слов), возвращаем исходный текст
-    if result == advice_text:
-        # Пробуем добавить общую ссылку на поиск "модная одежда"
-        result += "\n\n[Подобрать образ на Wildberries](https://www.wildberries.ru/catalog/0/search.aspx?search=модная%20одежда)"
-    
-    return result
+    token = os.getenv("TAKPRODAM_API_TOKEN")
+    if not token:
+        # Если токена нет, возвращаем текст без изменений
+        return advice_text
+
+    # Список ключевых слов (можно расширять)
+    keywords = [
+        "футболка", "рубашка", "свитер", "водолазка", "джинсы", "брюки",
+        "шорты", "юбка", "платье", "куртка", "пальто", "кепка", "обувь",
+        "кроссовки", "лоферы", "туфли", "сумка", "шарф", "шапка", "перчатки"
+    ]
+
+    # Ищем в тексте ключевые слова (регистронезависимо)
+    found_keywords = set()
+    for kw in keywords:
+        if re.search(r'\b' + re.escape(kw) + r'\b', advice_text.lower()):
+            found_keywords.add(kw)
+
+    # Для каждого ключевого слова ищем товар и добавляем ссылку
+    for kw in found_keywords:
+        name, link = search_product(kw, token)
+        if link:
+            # Добавляем ссылку в конец текста (или можно вставить после упоминания)
+            # Пока добавим отдельной строкой
+            advice_text += f"\n\n👉 [{name or kw.capitalize()} на маркетплейсах]({link})"
+        else:
+            advice_text += f"\n\n🔍 По запросу «{kw}» товары не найдены."
+
+    return advice_text
