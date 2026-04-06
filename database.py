@@ -127,3 +127,18 @@ def get_favorites(user_id: str):
 
 def delete_favorite(user_id: str, favorite_id: int):
     supabase.table("favorites").delete().eq("id", favorite_id).eq("user_id", user_id).execute()
+def create_invoice(user_id: str, amount: float, description: str) -> int:
+    result = supabase.table("invoices").insert({
+        "user_id": user_id,
+        "amount": amount,
+        "description": description,
+        "status": "pending"
+    }).execute()
+    return result.data[0]['id']
+
+def get_invoice(invoice_id: int):
+    result = supabase.table("invoices").select("*").eq("id", invoice_id).execute()
+    return result.data[0] if result.data else None
+
+def update_invoice_status(invoice_id: int, status: str):
+    supabase.table("invoices").update({"status": status}).eq("id", invoice_id).execute()
