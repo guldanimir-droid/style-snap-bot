@@ -2,6 +2,7 @@ import asyncio
 import logging
 import aiohttp
 import json
+import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command, CommandStart, CommandObject
@@ -20,13 +21,12 @@ from config import (
 
 from gigachat_client import GigaChatClientWrapper
 from prompts import SYSTEM_PROMPT
-from affiliate import generate_affiliate_links
+from affiliate import add_product_links, extract_keywords
 from takprodam import search_products
 import database
 import image_utils
 from cache import last_results_cache
 from states import ProfileStates
-import os
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -73,7 +73,8 @@ def get_result_keyboard():
     buttons = [
         [InlineKeyboardButton(text="🔄 Ещё совет", callback_data="more_advice")],
         [InlineKeyboardButton(text="📤 Поделиться", callback_data="share_result")],
-        [InlineKeyboardButton(text="⭐ В избранное", callback_data="save_favorite")]
+        [InlineKeyboardButton(text="⭐ В избранное", callback_data="save_favorite")],
+        [InlineKeyboardButton(text="🔍 Найти похожее", callback_data="find_similar")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -318,7 +319,7 @@ async def cmd_help(message: Message):
         "✅ Сохранять удачные советы в избранное\n"
         "✅ Начислять бонусные анализы за приглашение друзей\n"
         "✅ Продавать дополнительные анализы за Telegram Stars\n"
-        "✅ Учитывать твой тип фигуры, цветотип, бюджет, рост, возраст, размер\n"
+        "✅ Учитывать твой тип фигуры, бюджет, рост, возраст, размер\n"
         "✅ Искать товары на маркетплейсах (кнопка «Найти товары» или /search)\n\n"
         "<b>Команды:</b>\n"
         "/start — начать\n"
@@ -359,7 +360,6 @@ async def search_products_button(message: Message):
         "Например: джинсы, футболка, платье",
         reply_markup=ReplyKeyboardRemove()
     )
-    # Следующее текстовое сообщение будет обработано как поисковый запрос
 
 # ---- Избранное ----
 @dp.message(Command("favorites"))
@@ -537,7 +537,8 @@ async def handle_photo(message: Message, state: FSMContext):
         if size:
             personal_prompt += f"\nРазмер одежды: {size}."
         result = await gemini.analyze_style(image_bytes, personal_prompt)
-        result_with_links = generate_affiliate_links(result)
+        # Добавляем ссылки на товары
+        result_with_links = await add_product_links(result)
         last_results_cache[user_id] = result_with_links
         await message.reply(result_with_links, reply_markup=get_result_keyboard(), parse_mode="HTML")
         database.use_request(user_id)
@@ -647,6 +648,33 @@ async def save_favorite_callback(callback: CallbackQuery):
     await callback.answer("Сохранено в избранное!")
     await callback.message.delete()
 
+@dp.callback_query(lambda c: c.data == "find_similar")
+async def find_similar_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    result = last_results_cache.get(user_id)
+    if not result:
+        await callback.answer("Нет последнего анализа. Отправьте фото.", show_alert=True)
+        return
+    keywords = extract_keywords(result)
+    if not keywords:
+        await callback.answer("Не удалось определить, что искать.", show_alert=True)
+        return
+    token = os.getenv("TAKPRODAM_API_TOKEN")
+    if not token:
+        await callback.answer("Поиск временно недоступен.", show_alert=True)
+        return
+    await callback.answer("Ищу товары...")
+    products_text = "🔍 **Похожие товары:**\n"
+    for kw in keywords[:2]:
+        prods = search_products(kw, token, limit=2)
+        if prods:
+            for p in prods:
+                products_text += f"\n• [{p['name']}]({p['link']})"
+        else:
+            products_text += f"\n• {kw} — не найдено"
+    await callback.message.answer(products_text, parse_mode="Markdown", disable_web_page_preview=True)
+    await callback.answer()
+
 # ---- Запуск ----
 async def main():
     logger.info("Bot starting...")
@@ -654,5 +682,4 @@ async def main():
     await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
-    asyncio.run(main())
     asyncio.run(main())
