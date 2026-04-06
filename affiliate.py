@@ -30,9 +30,6 @@ CLOTHING_KEYWORDS = {
 }
 
 def generate_affiliate_links(advice_text: str) -> str:
-    """
-    Ищет в тексте ключевые слова одежды и добавляет партнёрские ссылки на товары.
-    """
     token = os.getenv("TAKPRODAM_API_TOKEN")
     if not token:
         return advice_text + "\n\n⚠️ Сервис поиска товаров временно недоступен."
@@ -46,14 +43,9 @@ def generate_affiliate_links(advice_text: str) -> str:
                 products = search_products(search_term, token, limit=1)
                 if products:
                     link = products[0]['link']
-                    # Добавляем ссылку, если её ещё нет
                     if link not in new_sentence:
                         new_sentence += f" [Купить на WB]({link})"
                 break
         new_sentences.append(new_sentence)
     result = '. '.join(new_sentences)
     return result
-        else:
-            advice_text += f"\n\n🔍 По запросу «{kw}» товары не найдены."
-
-    return advice_text
