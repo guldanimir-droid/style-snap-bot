@@ -359,7 +359,7 @@ async def search_products_button(message: Message):
         "Например: джинсы, футболка, платье",
         reply_markup=ReplyKeyboardRemove()
     )
-    # Далее будет обрабатываться текстовое сообщение как поисковый запрос (см. handle_text)
+    # Следующее текстовое сообщение будет обработано как поисковый запрос
 
 # ---- Избранное ----
 @dp.message(Command("favorites"))
@@ -422,7 +422,6 @@ async def search_products_button(message: Message):
         "Например: джинсы, футболка, платье",
         reply_markup=ReplyKeyboardRemove()
     )
-    # Теперь следующее текстовое сообщение будет воспринято как поисковый запрос
 
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
@@ -549,24 +548,19 @@ async def handle_photo(message: Message, state: FSMContext):
 # ---- Обработчик текста (включая поиск после нажатия кнопки) ----
 @dp.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
-    # Если пользователь нажал "Найти товары" и отправил текст — ищем товары
-    # Простой способ: если текст не начинается с / и не совпадает с кнопками, ищем
     if message.text.startswith('/'):
         return
     if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "🔍 Найти товары", "❓ Помощь"]:
         return
 
-    # Проверяем, не находимся ли мы в состоянии FSM
     current_state = await state.get_state()
     if current_state is not None:
         await message.answer("Сначала заверши настройку профиля с помощью кнопок.")
         return
 
-    # Если это не поисковый запрос (длина > 2 и нет ключевых слов), то обрабатываем как текстовый вопрос к стилисту
-    # Но для простоты сделаем так: если в тексте есть слово "найти" или он короткий — считаем поиском. Иначе — вопрос стилисту.
+    # Если текст выглядит как вопрос (длинный или содержит вопросительные слова) — отвечаем как стилист
     lower_text = message.text.lower()
-    if len(message.text) > 50 or any(word in lower_text for word in ["как", "что", "почему", "помоги", "подскажи"]):
-        # Вопрос стилисту
+    if len(message.text) > 50 or any(word in lower_text for word in ["как", "что", "почему", "помоги", "подскажи", "?"]):
         user_id = str(message.from_user.id)
         if not database.can_request(user_id):
             await message.reply(
@@ -660,4 +654,5 @@ async def main():
     await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
+    asyncio.run(main())
     asyncio.run(main())
