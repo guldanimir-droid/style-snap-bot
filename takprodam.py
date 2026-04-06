@@ -6,10 +6,6 @@ logger = logging.getLogger(__name__)
 TAKPRODAM_API_URL = "https://api.takprodam.ru/v2/publisher/product"
 
 def search_products(query: str, token: str, limit: int = 5):
-    """
-    Ищет товары на Takprodam по ключевому слову.
-    Возвращает список словарей: [{"name": ..., "link": ...}, ...]
-    """
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json"
@@ -22,7 +18,6 @@ def search_products(query: str, token: str, limit: int = 5):
         resp = requests.get(TAKPRODAM_API_URL, headers=headers, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        # Предполагаем, что API возвращает список в data['items']
         items = data.get('items', [])
         products = []
         for item in items:
@@ -32,5 +27,5 @@ def search_products(query: str, token: str, limit: int = 5):
             })
         return products
     except Exception as e:
-        logger.error(f"Ошибка при поиске товаров Takprodam: {e}")
+        logger.error(f"Ошибка поиска Takprodam: {e}")
         return []
