@@ -2,7 +2,6 @@ import asyncio
 import logging
 import aiohttp
 import json
-import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command, CommandStart, CommandObject
@@ -22,13 +21,12 @@ from config import (
 from gigachat_client import GigaChatClientWrapper
 from prompts import SYSTEM_PROMPT
 from affiliate import generate_affiliate_links
+from takprodam import search_products
 import database
 import image_utils
 from cache import last_results_cache
 from states import ProfileStates
-
-# Импорт для поиска товаров
-from takprodam import search_products
+import os
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -67,7 +65,7 @@ def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="🔗 Рефералка"), KeyboardButton(text="💬 Спросить стилиста")],
-        [KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="🔍 Найти товары"), KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -296,6 +294,7 @@ async def show_referral_callback(callback: CallbackQuery):
     await callback.answer()
     await callback.message.delete()
 
+# ---- Рефералка ----
 @dp.message(Command("referral"))
 async def cmd_referral(message: Message):
     user_id = str(message.from_user.id)
@@ -309,6 +308,7 @@ async def cmd_referral(message: Message):
         reply_markup=get_main_keyboard()
     )
 
+# ---- Помощь ----
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     await message.answer(
@@ -318,8 +318,8 @@ async def cmd_help(message: Message):
         "✅ Сохранять удачные советы в избранное\n"
         "✅ Начислять бонусные анализы за приглашение друзей\n"
         "✅ Продавать дополнительные анализы за Telegram Stars\n"
-        "✅ Учитывать твой тип фигуры, бюджет, рост, возраст, размер\n"
-        "✅ Находить товары на маркетплейсах через команду /search\n\n"
+        "✅ Учитывать твой тип фигуры, цветотип, бюджет, рост, возраст, размер\n"
+        "✅ Искать товары на маркетплейсах (кнопка «Найти товары» или /search)\n\n"
         "<b>Команды:</b>\n"
         "/start — начать\n"
         "/profile — мой профиль\n"
@@ -331,7 +331,7 @@ async def cmd_help(message: Message):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Команда поиска товаров через Takprodam ----
+# ---- Поиск товаров ----
 @dp.message(Command("search"))
 async def search_command(message: Message):
     query = message.text.replace("/search", "").strip()
@@ -351,6 +351,15 @@ async def search_command(message: Message):
     for p in products:
         text += f"• [{p['name']}]({p['link']})\n"
     await loading.edit_text(text, parse_mode="Markdown", disable_web_page_preview=True)
+
+@dp.message(F.text == "🔍 Найти товары")
+async def search_products_button(message: Message):
+    await message.answer(
+        "🔍 Введите название товара, который хотите найти.\n"
+        "Например: джинсы, футболка, платье",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    # Далее будет обрабатываться текстовое сообщение как поисковый запрос (см. handle_text)
 
 # ---- Избранное ----
 @dp.message(Command("favorites"))
@@ -406,11 +415,20 @@ async def ask_stylist(message: Message):
         reply_markup=ReplyKeyboardRemove()
     )
 
+@dp.message(F.text == "🔍 Найти товары")
+async def search_products_button(message: Message):
+    await message.answer(
+        "🔍 Введите название товара, который хотите найти.\n"
+        "Например: джинсы, футболка, платье",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    # Теперь следующее текстовое сообщение будет воспринято как поисковый запрос
+
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
     await cmd_help(message)
 
-# ---- Платежи (пакеты) ----
+# ---- Платежи ----
 async def send_package_invoice(chat_id: int, amount: int, stars: int, package_name: str):
     await bot.send_invoice(
         chat_id=chat_id,
@@ -497,6 +515,7 @@ async def handle_photo(message: Message, state: FSMContext):
         gender = user.get("gender", "")
         style = user.get("style_preference", "")
         figure = user.get("figure_type", "")
+        color = user.get("color_type", "")
         budget = user.get("budget", "")
         height = user.get("height", "")
         age = user.get("age", "")
@@ -508,6 +527,8 @@ async def handle_photo(message: Message, state: FSMContext):
             personal_prompt += f"\nПредпочитаемый стиль: {style}."
         if figure:
             personal_prompt += f"\nТип фигуры: {figure}."
+        if color:
+            personal_prompt += f"\nЦветотип: {color}."
         if budget:
             personal_prompt += f"\nБюджет: {budget}."
         if height:
@@ -517,7 +538,7 @@ async def handle_photo(message: Message, state: FSMContext):
         if size:
             personal_prompt += f"\nРазмер одежды: {size}."
         result = await gemini.analyze_style(image_bytes, personal_prompt)
-        result_with_links = generate_affiliate_links(result)  # теперь добавляет ссылки
+        result_with_links = generate_affiliate_links(result)
         last_results_cache[user_id] = result_with_links
         await message.reply(result_with_links, reply_markup=get_result_keyboard(), parse_mode="HTML")
         database.use_request(user_id)
@@ -525,52 +546,78 @@ async def handle_photo(message: Message, state: FSMContext):
         logger.exception("Ошибка фото")
         await message.reply("❌ Не удалось проанализировать. Попробуй другое фото.", reply_markup=get_main_keyboard())
 
-# ---- Обработчик текста ----
+# ---- Обработчик текста (включая поиск после нажатия кнопки) ----
 @dp.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
+    # Если пользователь нажал "Найти товары" и отправил текст — ищем товары
+    # Простой способ: если текст не начинается с / и не совпадает с кнопками, ищем
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "🔍 Найти товары", "❓ Помощь"]:
         return
+
+    # Проверяем, не находимся ли мы в состоянии FSM
     current_state = await state.get_state()
     if current_state is not None:
         await message.answer("Сначала заверши настройку профиля с помощью кнопок.")
         return
-    user_id = str(message.from_user.id)
-    if not database.can_request(user_id):
-        await message.reply(
-            "❌ У вас закончились бесплатные текстовые запросы.\n"
-            "Купите анализ или пригласите друга.",
-            reply_markup=get_main_keyboard()
-        )
-        return
-    await message.reply("💭 Думаю...", reply_markup=ReplyKeyboardRemove())
-    try:
-        user = database.get_user(user_id)
-        gender = user.get("gender", "")
-        style = user.get("style_preference", "")
-        figure = user.get("figure_type", "")
-        budget = user.get("budget", "")
-        height = user.get("height", "")
-        age = user.get("age", "")
-        size = user.get("clothing_size", "")
-        text_prompt = (
-            "Ты — профессиональный стилист-мужчина. Отвечай дружелюбно, по-русски, используй мужской род. "
-            "Обращайся на «ты». Учитывай российский контекст (WB/Ozon).\n\n"
-            f"Пользователь: {gender if gender else 'не указан'}, стиль: {style if style else 'не указан'}."
-        )
-        if figure: text_prompt += f"\nТип фигуры: {figure}."
-        if budget: text_prompt += f"\nБюджет: {budget}."
-        if height: text_prompt += f"\nРост: {height} см."
-        if age: text_prompt += f"\nВозраст: {age}."
-        if size: text_prompt += f"\nРазмер одежды: {size}."
-        answer = await gemini.generate_text(message.text, system_prompt=text_prompt)
-        answer_with_links = generate_affiliate_links(answer)  # тоже добавляем ссылки
-        await message.reply(answer_with_links, parse_mode="HTML", reply_markup=get_main_keyboard())
-        database.use_request(user_id)
-    except Exception as e:
-        logger.exception("Ошибка текста")
-        await message.reply("❌ Не удалось обработать. Попробуй позже.", reply_markup=get_main_keyboard())
+
+    # Если это не поисковый запрос (длина > 2 и нет ключевых слов), то обрабатываем как текстовый вопрос к стилисту
+    # Но для простоты сделаем так: если в тексте есть слово "найти" или он короткий — считаем поиском. Иначе — вопрос стилисту.
+    lower_text = message.text.lower()
+    if len(message.text) > 50 or any(word in lower_text for word in ["как", "что", "почему", "помоги", "подскажи"]):
+        # Вопрос стилисту
+        user_id = str(message.from_user.id)
+        if not database.can_request(user_id):
+            await message.reply(
+                "❌ У вас закончились бесплатные текстовые запросы.\n"
+                "Купите анализ или пригласите друга.",
+                reply_markup=get_main_keyboard()
+            )
+            return
+        await message.reply("💭 Думаю...", reply_markup=ReplyKeyboardRemove())
+        try:
+            user = database.get_user(user_id)
+            gender = user.get("gender", "")
+            style = user.get("style_preference", "")
+            figure = user.get("figure_type", "")
+            color = user.get("color_type", "")
+            budget = user.get("budget", "")
+            height = user.get("height", "")
+            age = user.get("age", "")
+            size = user.get("clothing_size", "")
+            text_prompt = (
+                "Ты — профессиональный стилист-мужчина. Отвечай дружелюбно, по-русски, используй мужской род. "
+                "Обращайся на «ты». Учитывай российский контекст (WB/Ozon).\n\n"
+                f"Пользователь: {gender if gender else 'не указан'}, стиль: {style if style else 'не указан'}."
+            )
+            if figure: text_prompt += f"\nТип фигуры: {figure}."
+            if color: text_prompt += f"\nЦветотип: {color}."
+            if budget: text_prompt += f"\nБюджет: {budget}."
+            if height: text_prompt += f"\nРост: {height} см."
+            if age: text_prompt += f"\nВозраст: {age}."
+            if size: text_prompt += f"\nРазмер одежды: {size}."
+            answer = await gemini.generate_text(message.text, system_prompt=text_prompt)
+            await message.reply(answer, parse_mode="HTML", reply_markup=get_main_keyboard())
+            database.use_request(user_id)
+        except Exception as e:
+            logger.exception("Ошибка текста")
+            await message.reply("❌ Не удалось обработать. Попробуй позже.", reply_markup=get_main_keyboard())
+    else:
+        # Поиск товаров
+        token = os.getenv("TAKPRODAM_API_TOKEN")
+        if not token:
+            await message.answer("🔧 Сервис поиска временно недоступен. Попробуйте позже.", reply_markup=get_main_keyboard())
+            return
+        loading = await message.answer("🔍 Ищу товары...")
+        products = search_products(message.text, token, limit=5)
+        if not products:
+            await loading.edit_text(f"😔 По запросу «{message.text}» ничего не найдено.")
+            return
+        text = f"🔎 *Результаты по запросу «{message.text}»:*\n\n"
+        for p in products:
+            text += f"• [{p['name']}]({p['link']})\n"
+        await loading.edit_text(text, parse_mode="Markdown", disable_web_page_preview=True)
 
 # ---- Кнопки результата ----
 @dp.callback_query(lambda c: c.data == "more_advice")
