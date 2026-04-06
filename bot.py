@@ -9,9 +9,6 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKey
 from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
-from fastapi import FastAPI, Request, Response
-import uvicorn
-from threading import Thread
 
 from config import (
     TELEGRAM_BOT_TOKEN,
@@ -30,7 +27,7 @@ import database
 import image_utils
 from cache import last_results_cache
 from states import ProfileStates
-from robokassa import generate_payment_link, check_result_signature, add_analyses_by_invoice
+from robokassa import generate_payment_link, check_payment_status
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -44,7 +41,7 @@ gemini = GigaChatClientWrapper(
     client_secret=GIGACHAT_SECRET
 )
 
-# ---- Клавиатуры ----
+# ---- Клавиатуры (как раньше) ----
 def get_gender_keyboard():
     kb = [[KeyboardButton(text="👩 Девушка"), KeyboardButton(text="👨 Парень")],[KeyboardButton(text="⏩ Пропустить")]]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, one_time_keyboard=True)
@@ -132,6 +129,7 @@ async def cmd_start(message: Message, state: FSMContext):
             reply_markup=get_main_keyboard()
         )
 
+# ---- Полная анкета (FSM) ----
 @dp.message(ProfileStates.waiting_gender, F.text.in_(["👩 Девушка", "👨 Парень"]))
 async def process_gender(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
@@ -329,12 +327,13 @@ async def cmd_help(message: Message):
         "/profile — мой профиль\n"
         "/referral — рефералка\n"
         "/favorites — избранное\n"
+        "/check_payment — проверить оплату и получить анализы\n"
         "/help — помощь",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
 
-# ---- Избранное (упрощённое) ----
+# ---- Избранное ----
 @dp.message(Command("favorites"))
 async def cmd_favorites(message: Message):
     user_id = str(message.from_user.id)
@@ -392,14 +391,14 @@ async def ask_stylist(message: Message):
 async def main_help(message: Message):
     await cmd_help(message)
 
-# ---- Платежи (кнопки в профиле) ----
+# ---- Платежи (кнопки) ----
 @dp.callback_query(lambda c: c.data == "buy_1_rub")
 async def buy_1_rub(callback: CallbackQuery):
     user_id = str(callback.from_user.id)
     link = await generate_payment_link(user_id, 25.0, "1 анализ стиля")
     await callback.message.answer(
         f"💳 Для оплаты 1 анализа (25 ₽) перейдите по ссылке:\n{link}\n\n"
-        "После оплаты анализы будут зачислены автоматически.",
+        "После оплаты нажмите /check_payment и укажите номер счёта (InvId).",
         disable_web_page_preview=True
     )
     await callback.answer()
@@ -410,7 +409,7 @@ async def buy_3_rub(callback: CallbackQuery):
     link = await generate_payment_link(user_id, 50.0, "3 анализа стиля")
     await callback.message.answer(
         f"💳 Для оплаты 3 анализов (50 ₽) перейдите по ссылке:\n{link}\n\n"
-        "После оплаты анализы будут зачислены автоматически.",
+        "После оплаты нажмите /check_payment и укажите номер счёта.",
         disable_web_page_preview=True
     )
     await callback.answer()
@@ -421,7 +420,7 @@ async def buy_5_rub(callback: CallbackQuery):
     link = await generate_payment_link(user_id, 75.0, "5 анализов стиля")
     await callback.message.answer(
         f"💳 Для оплаты 5 анализов (75 ₽) перейдите по ссылке:\n{link}\n\n"
-        "После оплаты анализы будут зачислены автоматически.",
+        "После оплаты нажмите /check_payment.",
         disable_web_page_preview=True
     )
     await callback.answer()
@@ -432,12 +431,53 @@ async def buy_subscribe(callback: CallbackQuery):
     link = await generate_payment_link(user_id, 500.0, "Месячная подписка на анализы стиля")
     await callback.message.answer(
         f"💳 Для оформления подписки (500 ₽/мес) перейдите по ссылке:\n{link}\n\n"
-        "После оплаты подписка активируется автоматически.",
+        "После оплаты нажмите /check_payment.",
         disable_web_page_preview=True
     )
     await callback.answer()
 
-# ---- Обработчик фото ----
+# ---- Проверка оплаты ----
+@dp.message(Command("check_payment"))
+async def cmd_check_payment(message: Message):
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Укажите номер счёта (InvId) после команды. Например: `/check_payment 12345`", parse_mode="Markdown")
+        return
+    try:
+        invoice_id = int(args[1])
+    except ValueError:
+        await message.answer("Номер счёта должен быть числом.")
+        return
+    status = await check_payment_status(invoice_id)
+    if not status:
+        await message.answer("❌ Не удалось проверить платёж. Попробуйте позже.")
+        return
+    if status.get('status') == 'failure':
+        await message.answer("❌ Платёж не найден или не оплачен.")
+        return
+    if status.get('status') == 'success':
+        user_id = str(message.from_user.id)
+        amount = status.get('amount', 0)
+        if amount == 25.0:
+            analyses = 1
+        elif amount == 50.0:
+            analyses = 3
+        elif amount == 75.0:
+            analyses = 5
+        elif amount == 500.0:
+            analyses = 999
+        else:
+            analyses = 0
+        if analyses > 0:
+            for _ in range(analyses):
+                database.add_paid_analysis(user_id)
+            await message.answer(f"✅ Платёж подтверждён! Вам начислено {analyses} анализов.")
+        else:
+            await message.answer("✅ Платёж подтверждён, но сумма не соответствует ни одному тарифу. Обратитесь к разработчику.")
+    else:
+        await message.answer("❌ Неизвестный статус платежа.")
+
+# ---- Обработчик фото (без изменений) ----
 @dp.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
     current_state = await state.get_state()
@@ -593,42 +633,9 @@ async def save_favorite_callback(callback: CallbackQuery):
 async def find_similar_callback(callback: CallbackQuery):
     await callback.answer("Функция поиска товаров временно отключена.", show_alert=True)
 
-# ---- Веб-сервер для уведомлений Robokassa ----
-app = FastAPI()
-
-@app.post("/robokassa/result")
-async def robokassa_result(request: Request):
-    form = await request.form()
-    params = dict(form)
-    logger.info(f"Robokassa result: {params}")
-    if not check_result_signature(params):
-        logger.error("Invalid signature")
-        return Response("bad sign", status_code=400)
-    inv_id = int(params.get('InvId'))
-    out_sum = float(params.get('OutSum'))
-    if add_analyses_by_invoice(inv_id, out_sum):
-        return Response(f"OK{inv_id}")
-    else:
-        return Response("error", status_code=400)
-
-@app.post("/robokassa/success")
-async def robokassa_success(request: Request):
-    form = await request.form()
-    params = dict(form)
-    logger.info(f"Robokassa success: {params}")
-    return Response("Payment successful. You can close this page.")
-
-# ---- Запуск веб-сервера в отдельном потоке ----
-def run_web():
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
-
-# ---- Основная функция бота ----
+# ---- Запуск ----
 async def main():
     logger.info("Bot starting...")
-    # Запускаем веб-сервер в фоне
-    thread = Thread(target=run_web, daemon=True)
-    thread.start()
-    # Запускаем polling бота
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot, drop_pending_updates=True)
 
