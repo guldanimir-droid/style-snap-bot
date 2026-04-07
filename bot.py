@@ -6,19 +6,7 @@ import os
 import time
 import hashlib
 import random
-def enhance_formatting(text: str) -> str:
-    """Дополнительно улучшает форматирование: гарантирует жирную оценку, заголовки советов."""
-    import re
-    # Оценка стиля: если нет <b> вокруг, добавить
-    text = re.sub(r'(✨ Оценка стиля:\s*\d+/10)', r'<b>\1</b>', text)
-    # Заголовки советов: "Совет №1:" -> <b>Совет №1:</b>
-    text = re.sub(r'(Совет\s*№\d+:)', r'<b>\1</b>', text)
-    # Что хорошо / Что можно улучшить
-    text = re.sub(r'(➕ Что хорошо:)', r'<b>\1</b>', text)
-    text = re.sub(r'(🔧 Что можно улучшить:)', r'<b>\1</b>', text)
-    text = re.sub(r'(📍 Куда отправиться:)', r'<b>\1</b>', text)
-    text = re.sub(r'(👥 Поделись этим советом с друзьями!)', r'<b>\1</b>', text)
-    return text
+import re
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command, CommandStart, CommandObject
@@ -56,6 +44,20 @@ gemini = GigaChatClientWrapper(
     client_id=GIGACHAT_CLIENT_ID,
     client_secret=GIGACHAT_SECRET
 )
+
+# ========== Функция улучшения форматирования ==========
+def enhance_formatting(text: str) -> str:
+    """Дополнительно улучшает форматирование: гарантирует жирную оценку, заголовки советов."""
+    # Оценка стиля: если нет <b> вокруг, добавить
+    text = re.sub(r'(✨ Оценка стиля:\s*\d+/10)', r'<b>\1</b>', text)
+    # Заголовки советов: "Совет №1:" -> <b>Совет №1:</b>
+    text = re.sub(r'(Совет\s*№\d+:)', r'<b>\1</b>', text)
+    # Что хорошо / Что можно улучшить
+    text = re.sub(r'(➕ Что хорошо:)', r'<b>\1</b>', text)
+    text = re.sub(r'(🔧 Что можно улучшить:)', r'<b>\1</b>', text)
+    text = re.sub(r'(📍 Куда отправиться:)', r'<b>\1</b>', text)
+    text = re.sub(r'(👥 Поделись этим советом с друзьями!)', r'<b>\1</b>', text)
+    return text
 
 # ---- Клавиатуры ----
 def get_gender_keyboard():
@@ -416,7 +418,6 @@ async def daily_tip(message: Message):
     user = database.get_user(user_id)
     gender = user.get("gender", "")
     style = user.get("style_preference", "")
-    # Короткий модный совет (можно брать из заранее заготовленных или генерировать)
     tips = [
         "🌟 Носи oversize-жакеты — они добавляют современный силуэт.",
         "👟 Белые кроссовки подходят к 99% образов.",
@@ -542,7 +543,8 @@ async def handle_photo(message: Message, state: FSMContext):
             personal_prompt += f"\nРазмер одежды: {size}."
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         result_with_links = generate_affiliate_links(result)
-        # Добавляем вирусный призыв в конец
+        # Улучшаем форматирование
+        result_with_links = enhance_formatting(result_with_links)
         viral_text = (
             "\n\n✨ <b>Поделись этим советом с друзьями!</b> ✨\n"
             "Нажми «Поделиться» и отправь картинку в соцсети.\n"
@@ -598,6 +600,7 @@ async def handle_text(message: Message, state: FSMContext):
         if age: text_prompt += f"\nВозраст: {age}."
         if size: text_prompt += f"\nРазмер одежды: {size}."
         answer = await gemini.generate_text(message.text, system_prompt=text_prompt)
+        answer = enhance_formatting(answer)
         await message.reply(answer, parse_mode="HTML", reply_markup=get_main_keyboard())
         database.use_request(user_id)
     except Exception as e:
@@ -659,7 +662,6 @@ async def share_vk_callback(callback: CallbackQuery):
     if not result:
         await callback.answer("Нет результата.")
         return
-    # Генерируем текст для ВК (можно улучшить)
     vk_text = f"Мой образ оценили на {result[:100]}... А ты проверь своего стилиста → @stil_snap_ai_bot"
     vk_url = f"https://vk.com/share.php?url=https://t.me/stil_snap_ai_bot&title={vk_text}"
     await callback.message.answer(
@@ -686,14 +688,12 @@ async def robokassa_result_handler(request):
         logger.warning("Не хватает параметров")
         return web.Response(text='Missing params', status=400)
 
-    # Проверяем подпись
     password2 = os.getenv('ROBOKASSA_PASSWORD2')
     my_signature = hashlib.md5(f"{out_sum}:{inv_id}:{password2}".encode()).hexdigest().upper()
     if my_signature != signature.upper():
         logger.warning(f"Неверная подпись: {signature} vs {my_signature}")
         return web.Response(text='Bad sign', status=400)
 
-    # Определяем количество купленных анализов по сумме
     amount = float(out_sum)
     if amount == 25.0:
         paid_count = 1
@@ -702,7 +702,7 @@ async def robokassa_result_handler(request):
     elif amount == 75.0:
         paid_count = 5
     elif amount == 500.0:
-        paid_count = 0  # подписка – обработайте позже
+        paid_count = 0
     else:
         paid_count = 0
 
@@ -720,7 +720,6 @@ async def main():
     logger.info("Bot starting...")
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # Запускаем веб-сервер для приёма уведомлений от Robokassa
     app = web.Application()
     app.router.add_post('/robokassa/result', robokassa_result_handler)
     runner = web.AppRunner(app)
@@ -730,7 +729,6 @@ async def main():
     await site.start()
     logger.info(f"Webhook server started on port {port}")
 
-    # Запускаем polling бота
     await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
