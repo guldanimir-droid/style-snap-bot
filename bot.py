@@ -5,6 +5,7 @@ import json
 import os
 import time
 import hashlib
+import random
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command, CommandStart, CommandObject
@@ -68,7 +69,7 @@ def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="🔗 Рефералка"), KeyboardButton(text="💬 Спросить стилиста")],
-        [KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="🔥 Ежедневный совет")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -77,7 +78,8 @@ def get_result_keyboard():
         [InlineKeyboardButton(text="🔄 Ещё совет", callback_data="more_advice")],
         [InlineKeyboardButton(text="📤 Поделиться", callback_data="share_result")],
         [InlineKeyboardButton(text="⭐ В избранное", callback_data="save_favorite")],
-        [InlineKeyboardButton(text="🔍 Найти похожее", callback_data="find_similar")]
+        [InlineKeyboardButton(text="👥 Бросить вызов другу", callback_data="challenge_friend")],
+        [InlineKeyboardButton(text="📢 Поделиться в ВК", callback_data="share_vk")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -124,7 +126,8 @@ async def cmd_start(message: Message, state: FSMContext):
         await message.answer(
             "✨ <b>Снова рад тебя видеть!</b>\n\n"
             "📸 Отправь своё фото — я дам совет по стилю.\n"
-            "💬 Или задай текстовый вопрос о моде.\n\n"
+            "💬 Или задай текстовый вопрос о моде.\n"
+            "🔥 Каждый день — новый совет!\n\n"
             "Бесплатно: 3 анализа + бонусы за приглашения.\n"
             "Дополнительные анализы можно купить в профиле за рубли.",
             parse_mode="HTML",
@@ -307,7 +310,8 @@ async def cmd_referral(message: Message):
     await message.answer(
         f"🔗 <b>Твоя реферальная ссылка</b>\n\n{link}\n\n"
         f"Пригласи друга — вы оба получите <b>+1 анализ</b>!\n"
-        f"Сейчас у тебя <b>{bonus}</b> бонусных анализов.",
+        f"Сейчас у тебя <b>{bonus}</b> бонусных анализов.\n\n"
+        f"👉 <b>Брось вызов другу:</b> отправь ему эту ссылку, и узнайте, кто стильнее!",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
@@ -318,11 +322,13 @@ async def cmd_help(message: Message):
     await message.answer(
         "💡 <b>Что умеет этот бот</b>\n\n"
         "✅ Анализировать твои фото и давать советы по стилю\n"
+        "✅ Ставить оценку от 1 до 10\n"
         "✅ Отвечать на текстовые вопросы о моде\n"
         "✅ Сохранять удачные советы в избранное\n"
         "✅ Начислять бонусные анализы за приглашение друзей\n"
         "✅ Продавать дополнительные анализы за рубли (Robokassa)\n"
-        "✅ Учитывать твой тип фигуры, бюджет, рост, возраст, размер\n\n"
+        "✅ Учитывать твой тип фигуры, бюджет, рост, возраст, размер\n"
+        "✅ Каждый день — новый модный совет\n\n"
         "<b>Команды:</b>\n"
         "/start — начать\n"
         "/profile — мой профиль\n"
@@ -390,6 +396,30 @@ async def ask_stylist(message: Message):
 @dp.message(F.text == "❓ Помощь")
 async def main_help(message: Message):
     await cmd_help(message)
+
+@dp.message(F.text == "🔥 Ежедневный совет")
+async def daily_tip(message: Message):
+    user_id = str(message.from_user.id)
+    user = database.get_user(user_id)
+    gender = user.get("gender", "")
+    style = user.get("style_preference", "")
+    # Короткий модный совет (можно брать из заранее заготовленных или генерировать)
+    tips = [
+        "🌟 Носи oversize-жакеты — они добавляют современный силуэт.",
+        "👟 Белые кроссовки подходят к 99% образов.",
+        "🧣 Шарф-хомут визуально удлиняет шею и делает образ уютным.",
+        "🕶️ Солнцезащитные очки с толстой оправой — тренд 2026.",
+        "👖 Карго штаны с защипами — мастхэв этого сезона.",
+        "💼 Ремень-цепочка превратит обычные джинсы в вечерний лук.",
+        "🧥 Пальто-халат — элегантно и удобно для офиса."
+    ]
+    tip = random.choice(tips)
+    await message.answer(
+        f"🔥 <b>Ежедневный модный совет</b>\n\n{tip}\n\n"
+        "Хочешь персонализированный анализ? Отправь фото!",
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard()
+    )
 
 # ---- Платежи (кнопки в профиле) ----
 @dp.callback_query(lambda c: c.data == "buy_1_rub")
@@ -499,8 +529,15 @@ async def handle_photo(message: Message, state: FSMContext):
             personal_prompt += f"\nРазмер одежды: {size}."
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         result_with_links = generate_affiliate_links(result)
-        last_results_cache[user_id] = result_with_links
-        await message.reply(result_with_links, reply_markup=get_result_keyboard(), parse_mode="HTML")
+        # Добавляем вирусный призыв в конец
+        viral_text = (
+            "\n\n✨ <b>Поделись этим советом с друзьями!</b> ✨\n"
+            "Нажми «Поделиться» и отправь картинку в соцсети.\n"
+            "А если бросишь вызов другу — узнаете, кто из вас стильнее! 👥"
+        )
+        final_result = result_with_links + viral_text
+        last_results_cache[user_id] = final_result
+        await message.reply(final_result, reply_markup=get_result_keyboard(), parse_mode="HTML")
         database.use_request(user_id)
     except Exception as e:
         logger.exception("Ошибка фото")
@@ -511,7 +548,7 @@ async def handle_photo(message: Message, state: FSMContext):
 async def handle_text(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь", "🔥 Ежедневный совет"]:
         return
     current_state = await state.get_state()
     if current_state is not None:
@@ -570,7 +607,7 @@ async def share_result_callback(callback: CallbackQuery):
         return
     try:
         img_bytes = image_utils.create_result_image(result)
-        await callback.message.answer_photo(photo=img_bytes, caption="✨ Результат для публикации ✨")
+        await callback.message.answer_photo(photo=img_bytes, caption="✨ Мой результат от AI-стилиста! А у тебя какой? Попробуй @stil_snap_ai_bot")
         await callback.answer("Готово!")
     except Exception as e:
         logger.exception("Ошибка генерации картинки")
@@ -588,9 +625,38 @@ async def save_favorite_callback(callback: CallbackQuery):
     await callback.answer("Сохранено в избранное!")
     await callback.message.delete()
 
-@dp.callback_query(lambda c: c.data == "find_similar")
-async def find_similar_callback(callback: CallbackQuery):
-    await callback.answer("Функция поиска товаров временно отключена.", show_alert=True)
+@dp.callback_query(lambda c: c.data == "challenge_friend")
+async def challenge_friend_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    link = database.get_referral_link(user_id)
+    await callback.message.answer(
+        f"👥 <b>Брось вызов другу!</b>\n\n"
+        f"Отправь ему эту ссылку:\n{link}\n\n"
+        f"Когда друг перейдёт и тоже получит оценку стиля, вы сможете сравнить результаты!\n"
+        f"За каждого приглашённого ты получишь +1 бонусный анализ.",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "share_vk")
+async def share_vk_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    result = last_results_cache.get(user_id)
+    if not result:
+        await callback.answer("Нет результата.")
+        return
+    # Генерируем текст для ВК (можно улучшить)
+    vk_text = f"Мой образ оценили на {result[:100]}... А ты проверь своего стилиста → @stil_snap_ai_bot"
+    vk_url = f"https://vk.com/share.php?url=https://t.me/stil_snap_ai_bot&title={vk_text}"
+    await callback.message.answer(
+        f"📢 <b>Поделиться в ВК</b>\n\n"
+        f"Нажми на ссылку, чтобы опубликовать результат в своей стене:\n{vk_url}\n\n"
+        f"Не забудь приложить картинку (её можно сохранить через кнопку «Поделиться»).",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+    await callback.answer()
 
 # ==================== ВЕБ-СЕРВЕР ДЛЯ УВЕДОМЛЕНИЙ ОТ ROBOKASSA ====================
 async def robokassa_result_handler(request):
@@ -628,8 +694,8 @@ async def robokassa_result_handler(request):
         paid_count = 0
 
     if paid_count > 0:
-        # Начисляем анализы через database
-        database.add_paid_requests(shp_user_id, paid_count)
+        from database import add_paid_requests
+        add_paid_requests(shp_user_id, paid_count)
         logger.info(f"Пользователю {shp_user_id} начислено {paid_count} анализов")
     else:
         logger.info(f"Сумма {amount} не соответствует пакету анализов, начисление не выполнено")
@@ -646,9 +712,10 @@ async def main():
     app.router.add_post('/robokassa/result', robokassa_result_handler)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8000)
+    port = int(os.environ.get('PORT', 8000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    logger.info("Webhook server started on port 8000")
+    logger.info(f"Webhook server started on port {port}")
 
     # Запускаем polling бота
     await dp.start_polling(bot, drop_pending_updates=True)
