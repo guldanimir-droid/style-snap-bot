@@ -4,16 +4,15 @@ import time
 import json
 from urllib.parse import urlencode
 
-# Генерация ссылки для оплаты (вызывается из бота)
 async def generate_payment_link(user_id: str, amount: float, description: str) -> str:
     login = os.getenv('ROBOKASSA_LOGIN')
     password1 = os.getenv('ROBOKASSA_PASSWORD1')
     is_test = int(os.getenv('ROBOKASSA_TEST', '1')) == 1
 
-    # Уникальный номер счета (InvId)
+    # Уникальный номер счёта
     invoice_id = int(time.time() * 1000) % 1000000000
 
-    # Данные для чека (обязательно для ФЗ-54)
+    # Чек (требование 54-ФЗ)
     receipt = {
         "items": [
             {
@@ -26,20 +25,18 @@ async def generate_payment_link(user_id: str, amount: float, description: str) -
     }
     receipt_json = json.dumps(receipt, separators=(',', ':'))
 
-    # Пользовательский параметр (передаём ID телеграм-пользователя)
+    # Передаём ID пользователя как Shp_user_id
     shp_params = {'Shp_user_id': user_id}
+    sorted_shp = sorted(shp_params.items())  # сортируем по ключу
 
-    # Сортируем Shp-параметры по алфавиту (у нас он один)
-    sorted_shp = sorted(shp_params.items())
-
-    # Строка для подписи: логин:сумма:счет:Receipt:пароль1:Shp_ключ=значение
+    # Строка для подписи: логин:сумма:счёт:Receipt:пароль1:Shp_ключ=значение
     signature_parts = [login, f"{amount:.2f}", str(invoice_id), receipt_json, password1]
     for k, v in sorted_shp:
         signature_parts.append(f"{k}={v}")
     signature_str = ":".join(signature_parts)
     signature_value = hashlib.md5(signature_str.encode()).hexdigest().upper()
 
-    # Все параметры для ссылки
+    # Параметры запроса
     data = {
         'MerchantLogin': login,
         'OutSum': f"{amount:.2f}",
@@ -54,7 +51,6 @@ async def generate_payment_link(user_id: str, amount: float, description: str) -
     base_url = 'https://auth.robokassa.ru/Merchant/Index.aspx'
     return f"{base_url}?{urlencode(data)}"
 
-# Проверка подписи при уведомлении от Robokassa (ResultURL)
 def check_result_signature(params: dict) -> bool:
     password2 = os.getenv('ROBOKASSA_PASSWORD2')
     out_sum = params.get('OutSum')
