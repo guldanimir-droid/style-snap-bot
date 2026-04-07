@@ -4,11 +4,13 @@ import aiohttp
 import json
 import os
 import time
+import hashlib
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, LabeledPrice, PreCheckoutQuery
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
+from aiohttp import web
 
 from config import (
     TELEGRAM_BOT_TOKEN,
@@ -590,10 +592,65 @@ async def save_favorite_callback(callback: CallbackQuery):
 async def find_similar_callback(callback: CallbackQuery):
     await callback.answer("Функция поиска товаров временно отключена.", show_alert=True)
 
-# ---- Запуск ----
+# ==================== ВЕБ-СЕРВЕР ДЛЯ УВЕДОМЛЕНИЙ ОТ ROBOKASSA ====================
+async def robokassa_result_handler(request):
+    """Принимает уведомление от Robokassa после оплаты"""
+    data = await request.post()
+    logger.info(f"Уведомление от Robokassa: {dict(data)}")
+
+    out_sum = data.get('OutSum')
+    inv_id = data.get('InvId')
+    signature = data.get('SignatureValue')
+    shp_user_id = data.get('Shp_user_id')
+
+    if not all([out_sum, inv_id, signature, shp_user_id]):
+        logger.warning("Не хватает параметров")
+        return web.Response(text='Missing params', status=400)
+
+    # Проверяем подпись
+    password2 = os.getenv('ROBOKASSA_PASSWORD2')
+    my_signature = hashlib.md5(f"{out_sum}:{inv_id}:{password2}".encode()).hexdigest().upper()
+    if my_signature != signature.upper():
+        logger.warning(f"Неверная подпись: {signature} vs {my_signature}")
+        return web.Response(text='Bad sign', status=400)
+
+    # Определяем количество купленных анализов по сумме
+    amount = float(out_sum)
+    if amount == 25.0:
+        paid_count = 1
+    elif amount == 50.0:
+        paid_count = 3
+    elif amount == 75.0:
+        paid_count = 5
+    elif amount == 500.0:
+        paid_count = 0  # подписка – обработайте позже
+    else:
+        paid_count = 0
+
+    if paid_count > 0:
+        # Начисляем анализы через database
+        database.add_paid_requests(shp_user_id, paid_count)
+        logger.info(f"Пользователю {shp_user_id} начислено {paid_count} анализов")
+    else:
+        logger.info(f"Сумма {amount} не соответствует пакету анализов, начисление не выполнено")
+
+    return web.Response(text='OK')
+
+# ---- Запуск бота и веб-сервера ----
 async def main():
     logger.info("Bot starting...")
     await bot.delete_webhook(drop_pending_updates=True)
+
+    # Запускаем веб-сервер для приёма уведомлений от Robokassa
+    app = web.Application()
+    app.router.add_post('/robokassa/result', robokassa_result_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8000)
+    await site.start()
+    logger.info("Webhook server started on port 8000")
+
+    # Запускаем polling бота
     await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
