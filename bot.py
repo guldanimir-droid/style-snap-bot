@@ -6,6 +6,19 @@ import os
 import time
 import hashlib
 import random
+def enhance_formatting(text: str) -> str:
+    """Дополнительно улучшает форматирование: гарантирует жирную оценку, заголовки советов."""
+    import re
+    # Оценка стиля: если нет <b> вокруг, добавить
+    text = re.sub(r'(✨ Оценка стиля:\s*\d+/10)', r'<b>\1</b>', text)
+    # Заголовки советов: "Совет №1:" -> <b>Совет №1:</b>
+    text = re.sub(r'(Совет\s*№\d+:)', r'<b>\1</b>', text)
+    # Что хорошо / Что можно улучшить
+    text = re.sub(r'(➕ Что хорошо:)', r'<b>\1</b>', text)
+    text = re.sub(r'(🔧 Что можно улучшить:)', r'<b>\1</b>', text)
+    text = re.sub(r'(📍 Куда отправиться:)', r'<b>\1</b>', text)
+    text = re.sub(r'(👥 Поделись этим советом с друзьями!)', r'<b>\1</b>', text)
+    return text
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command, CommandStart, CommandObject
