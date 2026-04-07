@@ -142,3 +142,17 @@ def get_invoice(invoice_id: int):
 
 def update_invoice_status(invoice_id: int, status: str):
     supabase.table("invoices").update({"status": status}).eq("id", invoice_id).execute()
+def add_paid_requests(user_id: str, count: int):
+    """Увеличивает количество оплаченных анализов у пользователя в Supabase"""
+    from config import SUPABASE_URL, SUPABASE_KEY
+    from supabase import create_client
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    # Получаем текущее значение paid_requests
+    resp = supabase.table('users').select('paid_requests').eq('user_id', user_id).execute()
+    if resp.data:
+        current = resp.data[0].get('paid_requests', 0)
+        new_value = current + count
+        supabase.table('users').update({'paid_requests': new_value}).eq('user_id', user_id).execute()
+    else:
+        # Если пользователь почему-то не найден, создаём запись
+        supabase.table('users').insert({'user_id': user_id, 'paid_requests': count}).execute()
