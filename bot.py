@@ -7,6 +7,8 @@ import time
 import hashlib
 import random
 import re
+import hmac
+import base64
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command, CommandStart, CommandObject
@@ -44,6 +46,16 @@ gemini = GigaChatClientWrapper(
     client_id=GIGACHAT_CLIENT_ID,
     client_secret=GIGACHAT_SECRET
 )
+
+# ========== Секретный ключ для подписи токенов ==========
+VIRTUAL_TRYON_SECRET = os.getenv('VIRTUAL_TRYON_SECRET', 'default-secret-change-me')
+
+def generate_tryon_token(user_id: str) -> str:
+    """Генерирует одноразовый токен для доступа к боту примерки"""
+    message = user_id.encode()
+    signature = hmac.new(VIRTUAL_TRYON_SECRET.encode(), message, hashlib.sha256).hexdigest()
+    token = base64.urlsafe_b64encode(f"{user_id}:{signature}".encode()).decode()
+    return token
 
 # ========== Функция улучшения форматирования ==========
 def enhance_formatting(text: str) -> str:
@@ -434,16 +446,32 @@ async def daily_tip(message: Message):
         reply_markup=get_main_keyboard()
     )
 
+# ========== НОВЫЙ ОБРАБОТЧИК КНОПКИ "👕 Виртуальная примерка" ==========
 @dp.message(F.text == "👕 Виртуальная примерка")
 async def virtual_tryon_handler(message: Message):
+    user_id = str(message.from_user.id)
+    # Проверяем, есть ли доступ (бесплатные, бонусные или оплаченные анализы)
+    if not database.can_request(user_id):
+        await message.answer(
+            "❌ У вас недостаточно анализов для виртуальной примерки.\n"
+            "Пополните баланс в разделе «Мой профиль».\n\n"
+            "Один анализ виртуальной примерки списывается как обычный анализ стиля.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    # Списываем один анализ (он будет использован, даже если пользователь не завершит примерку)
+    database.use_request(user_id)
+    # Генерируем одноразовый токен
+    token = generate_tryon_token(user_id)
+    link = f"https://t.me/VirtuLookBot?start={token}"
     await message.answer(
-        "👕 <b>Виртуальная примерка одежды</b>\n\n"
-        "Для этого я передаю тебя моему специальному боту-помощнику — @VirtuLookBot.\n\n"
-        "Просто перейди к нему, отправь своё фото и фото одежды, и он покажет, как вещь будет сидеть!\n\n"
-        "👉 [Нажми сюда, чтобы перейти к @VirtuLookBot](https://t.me/VirtuLookBot)",
+        f"✅ Анализ списан. Теперь вы можете воспользоваться виртуальной примеркой.\n\n"
+        f"👉 [Нажмите сюда, чтобы перейти к боту примерки]({link})\n\n"
+        f"После примерки вы можете вернуться в этого бота.\n"
+        f"Обратите внимание: доступ к боту примерки предоставлен только по этой ссылке.",
         parse_mode="Markdown",
-        reply_markup=get_main_keyboard(),
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
+        reply_markup=get_main_keyboard()
     )
 
 # ---- Платежи (кнопки в профиле) ----
