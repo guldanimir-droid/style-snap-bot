@@ -7,8 +7,6 @@ import time
 import hashlib
 import random
 import re
-import hmac
-import base64
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command, CommandStart, CommandObject
@@ -34,6 +32,7 @@ import image_utils
 from cache import last_results_cache
 from states import ProfileStates
 from robokassa import generate_payment_link, check_result_signature
+from middleware import AntiSpamMiddleware
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -42,24 +41,15 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+# Антиспам: не чаще 1 запроса в 10 секунд
+dp.message.middleware(AntiSpamMiddleware(time_limit=10))
+
 gemini = GigaChatClientWrapper(
     client_id=GIGACHAT_CLIENT_ID,
     client_secret=GIGACHAT_SECRET
 )
 
-# ========== Секретный ключ для подписи токенов ==========
-VIRTUAL_TRYON_SECRET = os.getenv('VIRTUAL_TRYON_SECRET', 'default-secret-change-me')
-
-def generate_tryon_token(user_id: str) -> str:
-    """Генерирует одноразовый токен для доступа к боту примерки"""
-    message = user_id.encode()
-    signature = hmac.new(VIRTUAL_TRYON_SECRET.encode(), message, hashlib.sha256).hexdigest()
-    token = base64.urlsafe_b64encode(f"{user_id}:{signature}".encode()).decode()
-    return token
-
-# ========== Функция улучшения форматирования ==========
 def enhance_formatting(text: str) -> str:
-    """Дополнительно улучшает форматирование: гарантирует жирную оценку, заголовки советов."""
     text = re.sub(r'(✨ Оценка стиля:\s*\d+/10)', r'<b>\1</b>', text)
     text = re.sub(r'(Совет\s*№\d+:)', r'<b>\1</b>', text)
     text = re.sub(r'(➕ Что хорошо:)', r'<b>\1</b>', text)
@@ -108,7 +98,6 @@ def get_result_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---- Проверка на безопасность ----
 async def check_image_safety(image_bytes: bytes) -> bool:
     moderation_prompt = (
         "Ты — модератор. Определи, есть ли на фото обнажённая грудь, половые органы, "
@@ -123,7 +112,7 @@ async def check_image_safety(image_bytes: bytes) -> bool:
         logger.error(f"Safety check failed: {e}")
         return True
 
-# ---- Обработчики команд (start, анкета) ----
+# ---- Обработчики команд ----
 @dp.message(CommandStart(deep_link=True))
 async def cmd_start_with_ref(message: Message, command: CommandObject, state: FSMContext):
     user_id = str(message.from_user.id)
@@ -304,7 +293,7 @@ async def cmd_profile(message: Message):
         [InlineKeyboardButton(text="💎 1 анализ — 25 ₽", callback_data="buy_1_rub")],
         [InlineKeyboardButton(text="💎 3 анализа — 50 ₽", callback_data="buy_3_rub")],
         [InlineKeyboardButton(text="💎 5 анализов — 75 ₽", callback_data="buy_5_rub")],
-        [InlineKeyboardButton(text="💎 Подписка (месяц) — 500 ₽", callback_data="buy_subscribe")]
+        [InlineKeyboardButton(text="💎 100 анализов — 1000 ₽", callback_data="buy_100_rub")]
     ])
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -425,10 +414,6 @@ async def main_help(message: Message):
 
 @dp.message(F.text == "🔥 Ежедневный совет")
 async def daily_tip(message: Message):
-    user_id = str(message.from_user.id)
-    user = database.get_user(user_id)
-    gender = user.get("gender", "")
-    style = user.get("style_preference", "")
     tips = [
         "🌟 Носи oversize-жакеты — они добавляют современный силуэт.",
         "👟 Белые кроссовки подходят к 99% образов.",
@@ -446,35 +431,19 @@ async def daily_tip(message: Message):
         reply_markup=get_main_keyboard()
     )
 
-# ========== НОВЫЙ ОБРАБОТЧИК КНОПКИ "👕 Виртуальная примерка" ==========
 @dp.message(F.text == "👕 Виртуальная примерка")
 async def virtual_tryon_handler(message: Message):
-    user_id = str(message.from_user.id)
-    # Проверяем, есть ли доступ (бесплатные, бонусные или оплаченные анализы)
-    if not database.can_request(user_id):
-        await message.answer(
-            "❌ У вас недостаточно анализов для виртуальной примерки.\n"
-            "Пополните баланс в разделе «Мой профиль».\n\n"
-            "Один анализ виртуальной примерки списывается как обычный анализ стиля.",
-            reply_markup=get_main_keyboard()
-        )
-        return
-    # Списываем один анализ (он будет использован, даже если пользователь не завершит примерку)
-    database.use_request(user_id)
-    # Генерируем одноразовый токен
-    token = generate_tryon_token(user_id)
-    link = f"https://t.me/VirtuLookBot?start={token}"
     await message.answer(
-        f"✅ Анализ списан. Теперь вы можете воспользоваться виртуальной примеркой.\n\n"
-        f"👉 [Нажмите сюда, чтобы перейти к боту примерки]({link})\n\n"
-        f"После примерки вы можете вернуться в этого бота.\n"
-        f"Обратите внимание: доступ к боту примерки предоставлен только по этой ссылке.",
+        "👕 <b>Виртуальная примерка одежды</b>\n\n"
+        "Для этого я передаю тебя моему специальному боту-помощнику — @VirtuLookBot.\n\n"
+        "Просто перейди к нему, отправь своё фото и фото одежды, и он покажет, как вещь будет сидеть!\n\n"
+        "👉 [Нажми сюда, чтобы перейти к @VirtuLookBot](https://t.me/VirtuLookBot)",
         parse_mode="Markdown",
-        disable_web_page_preview=True,
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(),
+        disable_web_page_preview=True
     )
 
-# ---- Платежи (кнопки в профиле) ----
+# ---- Платежи ----
 @dp.callback_query(lambda c: c.data == "buy_1_rub")
 async def buy_1_rub(callback: CallbackQuery):
     user_id = str(callback.from_user.id)
@@ -508,13 +477,13 @@ async def buy_5_rub(callback: CallbackQuery):
     )
     await callback.answer()
 
-@dp.callback_query(lambda c: c.data == "buy_subscribe")
-async def buy_subscribe(callback: CallbackQuery):
+@dp.callback_query(lambda c: c.data == "buy_100_rub")
+async def buy_100_rub(callback: CallbackQuery):
     user_id = str(callback.from_user.id)
-    link = await generate_payment_link(user_id, 500.0, "Месячная подписка на анализы стиля")
+    link = await generate_payment_link(user_id, 1000.0, "100 анализов стиля")
     await callback.message.answer(
-        f"💳 Для оформления подписки (500 ₽/мес) перейдите по ссылке:\n{link}\n\n"
-        "После оплаты подписка активируется автоматически.",
+        f"💳 Для оплаты 100 анализов (1000 ₽) перейдите по ссылке:\n{link}\n\n"
+        "После оплаты анализы будут зачислены автоматически.",
         disable_web_page_preview=True
     )
     await callback.answer()
@@ -738,8 +707,8 @@ async def robokassa_result_handler(request):
         paid_count = 3
     elif amount == 75.0:
         paid_count = 5
-    elif amount == 500.0:
-        paid_count = 0
+    elif amount == 1000.0:
+        paid_count = 100
     else:
         paid_count = 0
 
