@@ -48,11 +48,8 @@ gemini = GigaChatClientWrapper(
 # ========== Функция улучшения форматирования ==========
 def enhance_formatting(text: str) -> str:
     """Дополнительно улучшает форматирование: гарантирует жирную оценку, заголовки советов."""
-    # Оценка стиля: если нет <b> вокруг, добавить
     text = re.sub(r'(✨ Оценка стиля:\s*\d+/10)', r'<b>\1</b>', text)
-    # Заголовки советов: "Совет №1:" -> <b>Совет №1:</b>
     text = re.sub(r'(Совет\s*№\d+:)', r'<b>\1</b>', text)
-    # Что хорошо / Что можно улучшить
     text = re.sub(r'(➕ Что хорошо:)', r'<b>\1</b>', text)
     text = re.sub(r'(🔧 Что можно улучшить:)', r'<b>\1</b>', text)
     text = re.sub(r'(📍 Куда отправиться:)', r'<b>\1</b>', text)
@@ -84,7 +81,8 @@ def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="🔗 Рефералка"), KeyboardButton(text="💬 Спросить стилиста")],
-        [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="🔥 Ежедневный совет")]
+        [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="👕 Виртуальная примерка")],
+        [KeyboardButton(text="🔥 Ежедневный совет")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -343,7 +341,8 @@ async def cmd_help(message: Message):
         "✅ Начислять бонусные анализы за приглашение друзей\n"
         "✅ Продавать дополнительные анализы за рубли (Robokassa)\n"
         "✅ Учитывать твой тип фигуры, бюджет, рост, возраст, размер\n"
-        "✅ Каждый день — новый модный совет\n\n"
+        "✅ Каждый день — новый модный совет\n"
+        "✅ Виртуальная примерка одежды (через @VirtuLookBot)\n\n"
         "<b>Команды:</b>\n"
         "/start — начать\n"
         "/profile — мой профиль\n"
@@ -433,6 +432,18 @@ async def daily_tip(message: Message):
         "Хочешь персонализированный анализ? Отправь фото!",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
+    )
+
+@dp.message(F.text == "👕 Виртуальная примерка")
+async def virtual_tryon_handler(message: Message):
+    await message.answer(
+        "👕 <b>Виртуальная примерка одежды</b>\n\n"
+        "Для этого я передаю тебя моему специальному боту-помощнику — @VirtuLookBot.\n\n"
+        "Просто перейди к нему, отправь своё фото и фото одежды, и он покажет, как вещь будет сидеть!\n\n"
+        "👉 [Нажми сюда, чтобы перейти к @VirtuLookBot](https://t.me/VirtuLookBot)",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard(),
+        disable_web_page_preview=True
     )
 
 # ---- Платежи (кнопки в профиле) ----
@@ -543,7 +554,6 @@ async def handle_photo(message: Message, state: FSMContext):
             personal_prompt += f"\nРазмер одежды: {size}."
         result = await gemini.analyze_style(image_bytes, personal_prompt)
         result_with_links = generate_affiliate_links(result)
-        # Улучшаем форматирование
         result_with_links = enhance_formatting(result_with_links)
         viral_text = (
             "\n\n✨ <b>Поделись этим советом с друзьями!</b> ✨\n"
@@ -563,7 +573,7 @@ async def handle_photo(message: Message, state: FSMContext):
 async def handle_text(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь", "🔥 Ежедневный совет"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь", "🔥 Ежедневный совет", "👕 Виртуальная примерка"]:
         return
     current_state = await state.get_state()
     if current_state is not None:
@@ -675,7 +685,6 @@ async def share_vk_callback(callback: CallbackQuery):
 
 # ==================== ВЕБ-СЕРВЕР ДЛЯ УВЕДОМЛЕНИЙ ОТ ROBOKASSA ====================
 async def robokassa_result_handler(request):
-    """Принимает уведомление от Robokassa после оплаты"""
     data = await request.post()
     logger.info(f"Уведомление от Robokassa: {dict(data)}")
 
