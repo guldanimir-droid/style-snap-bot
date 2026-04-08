@@ -127,6 +127,7 @@ def get_favorites(user_id: str):
 
 def delete_favorite(user_id: str, favorite_id: int):
     supabase.table("favorites").delete().eq("id", favorite_id).eq("user_id", user_id).execute()
+
 def create_invoice(user_id: str, amount: float, description: str) -> int:
     result = supabase.table("invoices").insert({
         "user_id": user_id,
@@ -142,11 +143,9 @@ def get_invoice(invoice_id: int):
 
 def update_invoice_status(invoice_id: int, status: str):
     supabase.table("invoices").update({"status": status}).eq("id", invoice_id).execute()
+
 def add_paid_requests(user_id: str, count: int):
-    """Увеличивает количество оплаченных анализов у пользователя в Supabase"""
-    from config import SUPABASE_URL, SUPABASE_KEY
-    from supabase import create_client
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    """Увеличивает количество оплаченных анализов у пользователя (использует глобальный клиент supabase)"""
     # Получаем текущее значение paid_requests
     resp = supabase.table('users').select('paid_requests').eq('user_id', user_id).execute()
     if resp.data:
