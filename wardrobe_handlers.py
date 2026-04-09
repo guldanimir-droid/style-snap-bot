@@ -20,6 +20,16 @@ gemini = GigaChatClientWrapper(
     client_secret=GIGACHAT_SECRET
 )
 
+def get_main_keyboard():
+    kb = [
+        [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
+        [KeyboardButton(text="🔗 Рефералка"), KeyboardButton(text="💬 Спросить стилиста")],
+        [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="👕 Виртуальная примерка")],
+        [KeyboardButton(text="🔥 Ежедневный совет"), KeyboardButton(text="👗 Мой гардероб")],
+        [KeyboardButton(text="🤔 Что надеть?"), KeyboardButton(text="➕ Добавить вещь")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
 class AddClothesStates(StatesGroup):
     waiting_photo = State()
     waiting_type = State()
@@ -54,13 +64,8 @@ async def add_clothes_type(message: Message, state: FSMContext):
     text = message.text
     clothing_type = None if text == "⏩ Пропустить" else text.strip()
     await state.update_data(clothing_type=clothing_type)
-    # Создаём клавиатуру без from_button
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="⏩ Пропустить")]],
-        resize_keyboard=True
-    )
     await message.answer("Теперь напиши короткое описание (цвет, материал и т.д.) или нажми «Пропустить».",
-                         reply_markup=kb)
+                         reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="⏩ Пропустить")]], resize_keyboard=True))
     await state.set_state(AddClothesStates.waiting_description)
 
 @router.message(AddClothesStates.waiting_description, F.text)
@@ -81,7 +86,6 @@ async def add_clothes_description(message: Message, state: FSMContext):
         return
 
     add_wardrobe_item(user_id, image_url, clothing_type, description)
-    from bot import get_main_keyboard
     await message.answer("✅ Вещь добавлена в гардероб!", reply_markup=get_main_keyboard())
     await state.clear()
 
