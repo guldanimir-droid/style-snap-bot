@@ -32,9 +32,10 @@ async def cmd_add_clothes(message: Message, state: FSMContext):
     await message.answer("📸 Отправь фотографию вещи, которую хочешь добавить в гардероб.")
     await state.set_state(AddClothesStates.waiting_photo)
 
+# ---------- Обработчик фото при добавлении ----------
 @router.message(AddClothesStates.waiting_photo, F.photo)
 async def add_clothes_photo(message: Message, state: FSMContext):
-    logger.info(f"Получено фото для добавления от {message.from_user.id}")
+    logger.info(f"📸 add_clothes_photo: получили фото от {message.from_user.id}")
     file_id = message.photo[-1].file_id
     await state.update_data(photo_file_id=file_id)
     kb = ReplyKeyboardMarkup(
@@ -51,6 +52,7 @@ async def add_clothes_photo(message: Message, state: FSMContext):
 
 @router.message(AddClothesStates.waiting_type, F.text)
 async def add_clothes_type(message: Message, state: FSMContext):
+    logger.info(f"Тип одежды: {message.text}")
     text = message.text
     clothing_type = None if text == "⏩ Пропустить" else text.strip()
     await state.update_data(clothing_type=clothing_type)
@@ -60,6 +62,7 @@ async def add_clothes_type(message: Message, state: FSMContext):
 
 @router.message(AddClothesStates.waiting_description, F.text)
 async def add_clothes_description(message: Message, state: FSMContext):
+    logger.info(f"Описание: {message.text}")
     description = message.text if message.text != "⏩ Пропустить" else None
     user_id = str(message.from_user.id)
     data = await state.get_data()
