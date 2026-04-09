@@ -590,14 +590,18 @@ async def handle_photo(message: Message, state: FSMContext):
         logger.exception("Ошибка фото")
         await message.reply("❌ Не удалось проанализировать. Попробуй другое фото.", reply_markup=get_main_keyboard())
 
-# ---- Обработчик текста ----
+# ---- Обработчик текста (пропускаем состояния добавления вещи) ----
 @dp.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
+    # Если находимся в процессе добавления вещи — просто выходим, не мешаем гардеробу
+    current_state = await state.get_state()
+    if current_state in (AddClothesStates.waiting_type, AddClothesStates.waiting_description):
+        return
+
     if message.text.startswith('/'):
         return
     if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь", "🔥 Ежедневный совет", "👕 Виртуальная примерка", "👗 Мой гардероб", "🤔 Что надеть?", "➕ Добавить вещь"]:
         return
-    current_state = await state.get_state()
     if current_state is not None:
         await message.answer("Сначала заверши настройку профиля с помощью кнопок.")
         return
