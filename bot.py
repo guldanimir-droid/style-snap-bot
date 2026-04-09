@@ -33,7 +33,7 @@ from cache import last_results_cache
 from states import ProfileStates
 from robokassa import generate_payment_link, check_result_signature
 from middleware import AntiSpamMiddleware
-from wardrobe_handlers import router as wardrobe_router
+from wardrobe_handlers import router as wardrobe_router, cmd_my_wardrobe, cmd_look, cmd_add_clothes, AddClothesStates
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
