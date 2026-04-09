@@ -33,7 +33,7 @@ from cache import last_results_cache
 from states import ProfileStates
 from robokassa import generate_payment_link, check_result_signature
 from middleware import AntiSpamMiddleware
-from wardrobe_handlers import router as wardrobe_router, cmd_my_wardrobe, cmd_look, cmd_add_clothes, AddClothesStates
+from wardrobe_handlers import router as wardrobe_router
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -453,27 +453,17 @@ async def virtual_tryon_handler(message: Message):
 
 @dp.message(F.text == "👗 Мой гардероб")
 async def my_wardrobe_button(message: Message):
+    from wardrobe_handlers import cmd_my_wardrobe
     await cmd_my_wardrobe(message)
 
 @dp.message(F.text == "🤔 Что надеть?")
 async def look_button(message: Message):
+    from wardrobe_handlers import cmd_look
     await cmd_look(message)
 
 @dp.message(F.text == "➕ Добавить вещь")
 async def add_clothes_button(message: Message, state: FSMContext):
-    await cmd_add_clothes(message, state)
-
-# ---- Обработчики команд гардероба (для ручного ввода) ----
-@dp.message(Command("my_wardrobe"))
-async def my_wardrobe_command(message: Message):
-    await cmd_my_wardrobe(message)
-
-@dp.message(Command("look"))
-async def look_command(message: Message):
-    await cmd_look(message)
-
-@dp.message(Command("add_clothes"))
-async def add_clothes_command(message: Message, state: FSMContext):
+    from wardrobe_handlers import cmd_add_clothes
     await cmd_add_clothes(message, state)
 
 # ---- Платежи ----
