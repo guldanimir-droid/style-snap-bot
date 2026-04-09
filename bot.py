@@ -9,7 +9,7 @@ import random
 import re
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from aiogram.filters import Command, CommandStart, CommandObject, StateFilter
+from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiohttp import web
@@ -513,10 +513,13 @@ async def buy_100_rub(callback: CallbackQuery):
     await callback.answer()
 
 # ---- Обработчик фото (только когда не в состоянии добавления вещи) ----
-@dp.message(F.photo, ~StateFilter(AddClothesStates.waiting_photo))
+@dp.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
-    # Обычный анализ стиля
     current_state = await state.get_state()
+    if current_state == AddClothesStates.waiting_photo:
+        logger.info("Фото перехвачено состоянием добавления вещи, передаём в гардероб")
+        return
+    # Обычный анализ стиля
     if current_state is not None:
         await state.clear()
     user_id = str(message.from_user.id)
