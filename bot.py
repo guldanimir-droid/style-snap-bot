@@ -33,7 +33,7 @@ from cache import last_results_cache
 from states import ProfileStates
 from robokassa import generate_payment_link, check_result_signature
 from middleware import AntiSpamMiddleware
-from wardrobe_handlers import router as wardrobe_router, AddClothesStates
+from wardrobe_handlers import router as wardrobe_router
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -42,7 +42,6 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Подключаем роутер гардероба
 dp.include_router(wardrobe_router)
 
 dp.message.middleware(AntiSpamMiddleware(time_limit=10))
@@ -516,13 +515,8 @@ async def buy_100_rub(callback: CallbackQuery):
 # ---- Обработчик фото ----
 @dp.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
-    # Если пользователь в процессе добавления вещи — ничего не делаем, даем роутеру обработать
+    # Обычный анализ стиля (без перехвата)
     current_state = await state.get_state()
-    if current_state == AddClothesStates.waiting_photo:
-        logger.info("Фото перехвачено состоянием добавления вещи, пропускаем для гардероба")
-        return  # Выходим, не обрабатываем
-
-    # Обычный анализ стиля
     if current_state is not None:
         await state.clear()
     user_id = str(message.from_user.id)
