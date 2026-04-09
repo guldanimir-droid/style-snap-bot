@@ -596,7 +596,6 @@ async def handle_photo(message: Message, state: FSMContext):
 # ---- Обработчик текста (пропускаем состояния добавления вещи) ----
 @dp.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
-    # Если находимся в процессе добавления вещи — просто выходим, не мешаем гардеробу
     current_state = await state.get_state()
     if current_state in (AddClothesStates.waiting_type, AddClothesStates.waiting_description):
         return
