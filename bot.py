@@ -463,6 +463,19 @@ async def look_button(message: Message):
 async def add_clothes_button(message: Message, state: FSMContext):
     await cmd_add_clothes(message, state)
 
+# ---- Обработчики команд гардероба (для ручного ввода) ----
+@dp.message(Command("my_wardrobe"))
+async def my_wardrobe_command(message: Message):
+    await cmd_my_wardrobe(message)
+
+@dp.message(Command("look"))
+async def look_command(message: Message):
+    await cmd_look(message)
+
+@dp.message(Command("add_clothes"))
+async def add_clothes_command(message: Message, state: FSMContext):
+    await cmd_add_clothes(message, state)
+
 # ---- Платежи ----
 @dp.callback_query(lambda c: c.data == "buy_1_rub")
 async def buy_1_rub(callback: CallbackQuery):
