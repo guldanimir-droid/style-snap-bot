@@ -54,8 +54,13 @@ async def add_clothes_type(message: Message, state: FSMContext):
     text = message.text
     clothing_type = None if text == "⏩ Пропустить" else text.strip()
     await state.update_data(clothing_type=clothing_type)
+    # Создаём клавиатуру без from_button
+    kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="⏩ Пропустить")]],
+        resize_keyboard=True
+    )
     await message.answer("Теперь напиши короткое описание (цвет, материал и т.д.) или нажми «Пропустить».",
-                         reply_markup=ReplyKeyboardMarkup.from_button(KeyboardButton(text="⏩ Пропустить"), resize_keyboard=True))
+                         reply_markup=kb)
     await state.set_state(AddClothesStates.waiting_description)
 
 @router.message(AddClothesStates.waiting_description, F.text)
