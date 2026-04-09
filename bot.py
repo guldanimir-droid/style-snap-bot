@@ -42,7 +42,6 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Антиспам
 dp.message.middleware(AntiSpamMiddleware(time_limit=10))
 
 gemini = GigaChatClientWrapper(
@@ -514,14 +513,12 @@ async def buy_100_rub(callback: CallbackQuery):
 # ---- Обработчик фото ----
 @dp.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
-    # Проверяем, не находится ли пользователь в процессе добавления вещи
+    # Если пользователь в процессе добавления вещи — не трогаем, пусть обрабатывает wardrobe_handlers
     current_state = await state.get_state()
     if current_state == AddClothesStates.waiting_photo:
-        # Не обрабатываем фото здесь, оно будет обработано в wardrobe_handlers
-        return
+        return  # просто выходим, не мешаем
 
-    # Остальной код анализа стиля
-    current_state = await state.get_state()
+    # Иначе — обычный анализ стиля
     if current_state is not None:
         await state.clear()
     user_id = str(message.from_user.id)
