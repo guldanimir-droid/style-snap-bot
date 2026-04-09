@@ -33,6 +33,7 @@ from cache import last_results_cache
 from states import ProfileStates
 from robokassa import generate_payment_link, check_result_signature
 from middleware import AntiSpamMiddleware
+from wardrobe_handlers import router as wardrobe_router
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Антиспам: не чаще 1 запроса в 10 секунд
+# Антиспам
 dp.message.middleware(AntiSpamMiddleware(time_limit=10))
 
 gemini = GigaChatClientWrapper(
@@ -84,7 +85,8 @@ def get_main_keyboard():
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
         [KeyboardButton(text="🔗 Рефералка"), KeyboardButton(text="💬 Спросить стилиста")],
         [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="👕 Виртуальная примерка")],
-        [KeyboardButton(text="🔥 Ежедневный совет")]
+        [KeyboardButton(text="🔥 Ежедневный совет"), KeyboardButton(text="👗 Мой гардероб")],
+        [KeyboardButton(text="🤔 Что надеть?"), KeyboardButton(text="➕ Добавить вещь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -98,6 +100,7 @@ def get_result_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+# ---- Проверка на безопасность ----
 async def check_image_safety(image_bytes: bytes) -> bool:
     moderation_prompt = (
         "Ты — модератор. Определи, есть ли на фото обнажённая грудь, половые органы, "
@@ -112,7 +115,7 @@ async def check_image_safety(image_bytes: bytes) -> bool:
         logger.error(f"Safety check failed: {e}")
         return True
 
-# ---- Обработчики команд ----
+# ---- Обработчики команд (start, анкета) ----
 @dp.message(CommandStart(deep_link=True))
 async def cmd_start_with_ref(message: Message, command: CommandObject, state: FSMContext):
     user_id = str(message.from_user.id)
@@ -141,7 +144,8 @@ async def cmd_start(message: Message, state: FSMContext):
             "✨ <b>Снова рад тебя видеть!</b>\n\n"
             "📸 Отправь своё фото — я дам совет по стилю.\n"
             "💬 Или задай текстовый вопрос о моде.\n"
-            "🔥 Каждый день — новый совет!\n\n"
+            "🔥 Каждый день — новый совет!\n"
+            "👗 Теперь у меня есть виртуальный гардероб! Добавляй вещи и я помогу собрать образ.\n\n"
             "Бесплатно: 3 анализа + бонусы за приглашения.\n"
             "Дополнительные анализы можно купить в профиле за рубли.",
             parse_mode="HTML",
@@ -343,12 +347,16 @@ async def cmd_help(message: Message):
         "✅ Продавать дополнительные анализы за рубли (Robokassa)\n"
         "✅ Учитывать твой тип фигуры, бюджет, рост, возраст, размер\n"
         "✅ Каждый день — новый модный совет\n"
-        "✅ Виртуальная примерка одежды (через @VirtuLookBot)\n\n"
+        "✅ Виртуальная примерка одежды (через @VirtuLookBot)\n"
+        "✅ Виртуальный гардероб: добавляй вещи и получай готовые образы!\n\n"
         "<b>Команды:</b>\n"
         "/start — начать\n"
         "/profile — мой профиль\n"
         "/referral — рефералка\n"
         "/favorites — избранное\n"
+        "/add_clothes — добавить вещь в гардероб\n"
+        "/my_wardrobe — показать гардероб\n"
+        "/look — что надеть сегодня?\n"
         "/help — помощь",
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
@@ -442,6 +450,18 @@ async def virtual_tryon_handler(message: Message):
         reply_markup=get_main_keyboard(),
         disable_web_page_preview=True
     )
+
+@dp.message(F.text == "👗 Мой гардероб")
+async def my_wardrobe_button(message: Message):
+    await cmd_my_wardrobe(message)
+
+@dp.message(F.text == "🤔 Что надеть?")
+async def look_button(message: Message):
+    await cmd_look(message)
+
+@dp.message(F.text == "➕ Добавить вещь")
+async def add_clothes_button(message: Message, state: FSMContext):
+    await cmd_add_clothes(message, state)
 
 # ---- Платежи ----
 @dp.callback_query(lambda c: c.data == "buy_1_rub")
@@ -570,7 +590,7 @@ async def handle_photo(message: Message, state: FSMContext):
 async def handle_text(message: Message, state: FSMContext):
     if message.text.startswith('/'):
         return
-    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь", "🔥 Ежедневный совет", "👕 Виртуальная примерка"]:
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь", "🔥 Ежедневный совет", "👕 Виртуальная примерка", "👗 Мой гардероб", "🤔 Что надеть?", "➕ Добавить вещь"]:
         return
     current_state = await state.get_state()
     if current_state is not None:
@@ -725,6 +745,9 @@ async def robokassa_result_handler(request):
 async def main():
     logger.info("Bot starting...")
     await bot.delete_webhook(drop_pending_updates=True)
+
+    # Подключаем роутер гардероба
+    dp.include_router(wardrobe_router)
 
     app = web.Application()
     app.router.add_post('/robokassa/result', robokassa_result_handler)
