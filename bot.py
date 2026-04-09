@@ -33,7 +33,7 @@ from cache import last_results_cache
 from states import ProfileStates
 from robokassa import generate_payment_link, check_result_signature
 from middleware import AntiSpamMiddleware
-from wardrobe_handlers import router as wardrobe_router
+from wardrobe_handlers import router as wardrobe_router, AddClothesStates
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -508,6 +508,204 @@ async def buy_100_rub(callback: CallbackQuery):
     await callback.message.answer(
         f"💳 Для оплаты 100 анализов (1000 ₽) перейдите по ссылке:\n{link}\n\n"
         "После оплаты анализы будут зачислены автоматически.",
+        disable_web_page_preview=True
+    )
+    await callback.answer()
+
+# ---- Обработчик фото (анализ стиля, но с проверкой состояния) ----
+@dp.message(F.photo)
+async def handle_photo(message: Message, state: FSMContext):
+    # Если находимся в процессе добавления вещи — не трогаем, пусть обрабатывает wardrobe_handlers
+    current_state = await state.get_state()
+    if current_state == AddClothesStates.waiting_photo:
+        logger.info("Фото перехвачено состоянием добавления вещи, передаём в гардероб")
+        return
+
+    # Обычный анализ стиля
+    if current_state is not None:
+        await state.clear()
+    user_id = str(message.from_user.id)
+    photo = message.photo[-1]
+    if photo.file_size > 5 * 1024 * 1024:
+        await message.reply("⚠️ Фото слишком большое (до 5 МБ).")
+        return
+    if not database.can_request(user_id):
+        await message.reply(
+            "❌ У вас закончились бесплатные анализы.\n"
+            "Купите пакет анализов в профиле за рубли.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    file = await bot.get_file(photo.file_id)
+    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
+    await message.reply("🔍 Анализирую... пару секунд.", reply_markup=ReplyKeyboardRemove())
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(file_url) as resp:
+                if resp.status != 200:
+                    await message.reply("❌ Не удалось загрузить фото.")
+                    return
+                image_bytes = await resp.read()
+        if not await check_image_safety(image_bytes):
+            await message.reply(
+                "⚠️ Извините, я не анализирую фото с откровенным содержанием.\n"
+                "Отправьте фото в обычной одежде.",
+                reply_markup=get_main_keyboard()
+            )
+            return
+        user = database.get_user(user_id)
+        gender = user.get("gender", "")
+        style = user.get("style_preference", "")
+        figure = user.get("figure_type", "")
+        color = user.get("color_type", "")
+        budget = user.get("budget", "")
+        height = user.get("height", "")
+        age = user.get("age", "")
+        size = user.get("clothing_size", "")
+        personal_prompt = SYSTEM_PROMPT
+        if gender:
+            personal_prompt += f"\nПол: {gender}."
+        if style:
+            personal_prompt += f"\nПредпочитаемый стиль: {style}."
+        if figure:
+            personal_prompt += f"\nТип фигуры: {figure}."
+        if color:
+            personal_prompt += f"\nЦветотип: {color}."
+        if budget:
+            personal_prompt += f"\nБюджет: {budget}."
+        if height:
+            personal_prompt += f"\nРост: {height} см."
+        if age:
+            personal_prompt += f"\nВозраст: {age}."
+        if size:
+            personal_prompt += f"\nРазмер одежды: {size}."
+        result = await gemini.analyze_style(image_bytes, personal_prompt)
+        result_with_links = generate_affiliate_links(result)
+        result_with_links = enhance_formatting(result_with_links)
+        viral_text = (
+            "\n\n✨ <b>Поделись этим советом с друзьями!</b> ✨\n"
+            "Нажми «Поделиться» и отправь картинку в соцсети.\n"
+            "А если бросишь вызов другу — узнаете, кто из вас стильнее! 👥"
+        )
+        final_result = result_with_links + viral_text
+        last_results_cache[user_id] = final_result
+        await message.reply(final_result, reply_markup=get_result_keyboard(), parse_mode="HTML")
+        database.use_request(user_id)
+    except Exception as e:
+        logger.exception("Ошибка фото")
+        await message.reply("❌ Не удалось проанализировать. Попробуй другое фото.", reply_markup=get_main_keyboard())
+
+# ---- Обработчик текста ----
+@dp.message(F.text)
+async def handle_text(message: Message, state: FSMContext):
+    if message.text.startswith('/'):
+        return
+    if message.text in ["📸 Анализировать", "👤 Мой профиль", "🔗 Рефералка", "💬 Спросить стилиста", "❓ Помощь", "🔥 Ежедневный совет", "👕 Виртуальная примерка", "👗 Мой гардероб", "🤔 Что надеть?", "➕ Добавить вещь"]:
+        return
+    current_state = await state.get_state()
+    if current_state is not None:
+        await message.answer("Сначала заверши настройку профиля с помощью кнопок.")
+        return
+    user_id = str(message.from_user.id)
+    if not database.can_request(user_id):
+        await message.reply(
+            "❌ У вас закончились бесплатные текстовые запросы.\n"
+            "Купите анализ или пригласите друга.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    await message.reply("💭 Думаю...", reply_markup=ReplyKeyboardRemove())
+    try:
+        user = database.get_user(user_id)
+        gender = user.get("gender", "")
+        style = user.get("style_preference", "")
+        figure = user.get("figure_type", "")
+        color = user.get("color_type", "")
+        budget = user.get("budget", "")
+        height = user.get("height", "")
+        age = user.get("age", "")
+        size = user.get("clothing_size", "")
+        text_prompt = (
+            "Ты — профессиональный стилист-мужчина. Отвечай дружелюбно, по-русски, используй мужской род. "
+            "Обращайся на «ты». Учитывай российский контекст (WB/Ozon).\n\n"
+            f"Пользователь: {gender if gender else 'не указан'}, стиль: {style if style else 'не указан'}."
+        )
+        if figure: text_prompt += f"\nТип фигуры: {figure}."
+        if color: text_prompt += f"\nЦветотип: {color}."
+        if budget: text_prompt += f"\nБюджет: {budget}."
+        if height: text_prompt += f"\nРост: {height} см."
+        if age: text_prompt += f"\nВозраст: {age}."
+        if size: text_prompt += f"\nРазмер одежды: {size}."
+        answer = await gemini.generate_text(message.text, system_prompt=text_prompt)
+        answer = enhance_formatting(answer)
+        await message.reply(answer, parse_mode="HTML", reply_markup=get_main_keyboard())
+        database.use_request(user_id)
+    except Exception as e:
+        logger.exception("Ошибка текста")
+        await message.reply("❌ Не удалось обработать. Попробуй позже.", reply_markup=get_main_keyboard())
+
+# ---- Кнопки результата ----
+@dp.callback_query(lambda c: c.data == "more_advice")
+async def more_advice_callback(callback: CallbackQuery):
+    await callback.answer("Отправь новое фото!")
+    await callback.message.answer("📸 Отправь другое фото.")
+    await callback.message.delete()
+
+@dp.callback_query(lambda c: c.data == "share_result")
+async def share_result_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    result = last_results_cache.get(user_id)
+    if not result:
+        await callback.answer("Нет результата. Отправь фото.")
+        return
+    try:
+        img_bytes = image_utils.create_result_image(result)
+        await callback.message.answer_photo(photo=img_bytes, caption="✨ Мой результат от AI-стилиста! А у тебя какой? Попробуй @stil_snap_ai_bot")
+        await callback.answer("Готово!")
+    except Exception as e:
+        logger.exception("Ошибка генерации картинки")
+        await callback.answer("Не удалось создать картинку.")
+    await callback.message.delete()
+
+@dp.callback_query(lambda c: c.data == "save_favorite")
+async def save_favorite_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    result = last_results_cache.get(user_id)
+    if not result:
+        await callback.answer("Нет результата.")
+        return
+    database.add_favorite(user_id, result)
+    await callback.answer("Сохранено в избранное!")
+    await callback.message.delete()
+
+@dp.callback_query(lambda c: c.data == "challenge_friend")
+async def challenge_friend_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    link = database.get_referral_link(user_id)
+    await callback.message.answer(
+        f"👥 <b>Брось вызов другу!</b>\n\n"
+        f"Отправь ему эту ссылку:\n{link}\n\n"
+        f"Когда друг перейдёт и тоже получит оценку стиля, вы сможете сравнить результаты!\n"
+        f"За каждого приглашённого ты получишь +1 бонусный анализ.",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "share_vk")
+async def share_vk_callback(callback: CallbackQuery):
+    user_id = str(callback.from_user.id)
+    result = last_results_cache.get(user_id)
+    if not result:
+        await callback.answer("Нет результата.")
+        return
+    vk_text = f"Мой образ оценили на {result[:100]}... А ты проверь своего стилиста → @stil_snap_ai_bot"
+    vk_url = f"https://vk.com/share.php?url=https://t.me/stil_snap_ai_bot&title={vk_text}"
+    await callback.message.answer(
+        f"📢 <b>Поделиться в ВК</b>\n\n"
+        f"Нажми на ссылку, чтобы опубликовать результат в своей стене:\n{vk_url}\n\n"
+        f"Не забудь приложить картинку (её можно сохранить через кнопку «Поделиться»).",
+        parse_mode="HTML",
         disable_web_page_preview=True
     )
     await callback.answer()
