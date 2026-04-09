@@ -145,13 +145,29 @@ def update_invoice_status(invoice_id: int, status: str):
     supabase.table("invoices").update({"status": status}).eq("id", invoice_id).execute()
 
 def add_paid_requests(user_id: str, count: int):
-    """Увеличивает количество оплаченных анализов у пользователя (использует глобальный клиент supabase)"""
-    # Получаем текущее значение paid_requests
     resp = supabase.table('users').select('paid_requests').eq('user_id', user_id).execute()
     if resp.data:
         current = resp.data[0].get('paid_requests', 0)
         new_value = current + count
         supabase.table('users').update({'paid_requests': new_value}).eq('user_id', user_id).execute()
     else:
-        # Если пользователь почему-то не найден, создаём запись
         supabase.table('users').insert({'user_id': user_id, 'paid_requests': count}).execute()
+
+# === ГАРДЕРОБ ===
+def add_wardrobe_item(user_id: str, image_url: str, clothing_type: str = None, description: str = None):
+    """Добавить вещь в гардероб"""
+    supabase.table('wardrobe').insert({
+        'user_id': user_id,
+        'image_url': image_url,
+        'clothing_type': clothing_type,
+        'description': description
+    }).execute()
+
+def get_wardrobe_items(user_id: str):
+    """Получить все вещи пользователя"""
+    resp = supabase.table('wardrobe').select('*').eq('user_id', user_id).order('created_at', desc=True).execute()
+    return resp.data if resp.data else []
+
+def delete_wardrobe_item(user_id: str, item_id: int):
+    """Удалить вещь по id"""
+    supabase.table('wardrobe').delete().eq('id', item_id).eq('user_id', user_id).execute()
