@@ -33,7 +33,8 @@ from cache import last_results_cache
 from states import ProfileStates
 from robokassa import generate_payment_link, check_result_signature
 from middleware import AntiSpamMiddleware
-from wardrobe_handlers import router as wardrobe_router, AddClothesStates
+from wardrobe_handlers import router as wardrobe_router
+from wardrobe_handlers import AddClothesStates
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -41,6 +42,9 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
+
+# Подключаем роутер гардероба (СРАЗУ ПОСЛЕ СОЗДАНИЯ ДИСПЕТЧЕРА)
+dp.include_router(wardrobe_router)
 
 dp.message.middleware(AntiSpamMiddleware(time_limit=10))
 
@@ -452,6 +456,7 @@ async def virtual_tryon_handler(message: Message):
 
 @dp.message(F.text == "👗 Мой гардероб")
 async def my_wardrobe_button(message: Message):
+    # Явно вызываем обработчик из гардероба
     from wardrobe_handlers import cmd_my_wardrobe
     await cmd_my_wardrobe(message)
 
@@ -513,12 +518,13 @@ async def buy_100_rub(callback: CallbackQuery):
 # ---- Обработчик фото ----
 @dp.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
-    # Если пользователь в процессе добавления вещи — не трогаем, пусть обрабатывает wardrobe_handlers
+    # Если пользователь в процессе добавления вещи — пропускаем, пусть обрабатывает wardrobe_handlers
     current_state = await state.get_state()
     if current_state == AddClothesStates.waiting_photo:
-        return  # просто выходим, не мешаем
+        logger.info("Фото перехвачено состоянием добавления вещи, передаём в гардероб")
+        return  # Не мешаем обработчику из wardrobe_handlers
 
-    # Иначе — обычный анализ стиля
+    # Обычный анализ стиля
     if current_state is not None:
         await state.clear()
     user_id = str(message.from_user.id)
@@ -753,8 +759,8 @@ async def main():
     logger.info("Bot starting...")
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # Подключаем роутер гардероба
-    dp.include_router(wardrobe_router)
+    # Роутер уже подключен в начале файла, но для уверенности проверим
+    # dp.include_router(wardrobe_router)  # уже подключен
 
     app = web.Application()
     app.router.add_post('/robokassa/result', robokassa_result_handler)
