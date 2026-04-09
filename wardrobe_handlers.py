@@ -1,7 +1,6 @@
-import asyncio
 import logging
 import random
-from aiogram import F, Router, Bot
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -26,14 +25,16 @@ class AddClothesStates(StatesGroup):
     waiting_type = State()
     waiting_description = State()
 
-# ---- Добавление вещи ----
+# ---------- Команда добавления вещи ----------
 @router.message(Command("add_clothes"))
 async def cmd_add_clothes(message: Message, state: FSMContext):
+    logger.info(f"Команда /add_clothes от {message.from_user.id}")
     await message.answer("📸 Отправь фотографию вещи, которую хочешь добавить в гардероб.")
     await state.set_state(AddClothesStates.waiting_photo)
 
 @router.message(AddClothesStates.waiting_photo, F.photo)
 async def add_clothes_photo(message: Message, state: FSMContext):
+    logger.info(f"Получено фото для добавления от {message.from_user.id}")
     file_id = message.photo[-1].file_id
     await state.update_data(photo_file_id=file_id)
     kb = ReplyKeyboardMarkup(
@@ -51,10 +52,7 @@ async def add_clothes_photo(message: Message, state: FSMContext):
 @router.message(AddClothesStates.waiting_type, F.text)
 async def add_clothes_type(message: Message, state: FSMContext):
     text = message.text
-    if text == "⏩ Пропустить":
-        clothing_type = None
-    else:
-        clothing_type = text.strip()
+    clothing_type = None if text == "⏩ Пропустить" else text.strip()
     await state.update_data(clothing_type=clothing_type)
     await message.answer("Теперь напиши короткое описание (цвет, материал и т.д.) или нажми «Пропустить».",
                          reply_markup=ReplyKeyboardMarkup.from_button(KeyboardButton(text="⏩ Пропустить"), resize_keyboard=True))
@@ -81,9 +79,10 @@ async def add_clothes_description(message: Message, state: FSMContext):
     await message.answer("✅ Вещь добавлена в гардероб!", reply_markup=get_main_keyboard())
     await state.clear()
 
-# ---- Показать гардероб ----
+# ---------- Показать гардероб ----------
 @router.message(Command("my_wardrobe"))
 async def cmd_my_wardrobe(message: Message):
+    logger.info(f"Команда /my_wardrobe от {message.from_user.id}")
     user_id = str(message.from_user.id)
     items = get_wardrobe_items(user_id)
     if not items:
@@ -102,11 +101,11 @@ async def cmd_my_wardrobe(message: Message):
             await bot.send_photo(chat_id=message.chat.id, photo=item['image_url'],
                                  caption=caption, reply_markup=buttons, parse_mode="HTML")
         except TelegramBadRequest as e:
-            logger.error(f"Не удалось отправить фото {item['image_url']}: {e}")
+            logger.error(f"Ошибка отправки фото {item['image_url']}: {e}")
             await message.answer(f"⚠️ Не удалось показать одну из вещей. Попробуйте удалить её и добавить заново.")
 
-# ---- Удаление вещи ----
-@router.callback_query(lambda c: c.data.startswith("del_wardrobe_"))
+# ---------- Удаление вещи ----------
+@router.callback_query(lambda c: c.data and c.data.startswith("del_wardrobe_"))
 async def delete_wardrobe_callback(callback: CallbackQuery):
     item_id = int(callback.data.split("_")[2])
     user_id = str(callback.from_user.id)
@@ -114,19 +113,20 @@ async def delete_wardrobe_callback(callback: CallbackQuery):
     await callback.answer("Вещь удалена из гардероба")
     await callback.message.delete()
 
-# ---- Примерка (заглушка) ----
-@router.callback_query(lambda c: c.data.startswith("tryon_"))
+# ---------- Примерка (заглушка) ----------
+@router.callback_query(lambda c: c.data and c.data.startswith("tryon_"))
 async def tryon_wardrobe_callback(callback: CallbackQuery):
     await callback.answer("Функция примерки скоро появится! Пока воспользуйся @VirtuLookBot", show_alert=True)
 
-# ---- Поиск похожего (заглушка) ----
-@router.callback_query(lambda c: c.data.startswith("find_"))
+# ---------- Поиск похожего (заглушка) ----------
+@router.callback_query(lambda c: c.data and c.data.startswith("find_"))
 async def find_similar_callback(callback: CallbackQuery):
     await callback.answer("Функция поиска похожих вещей в разработке", show_alert=True)
 
-# ---- Что надеть? ----
+# ---------- Что надеть? ----------
 @router.message(Command("look"))
 async def cmd_look(message: Message):
+    logger.info(f"Команда /look от {message.from_user.id}")
     user_id = str(message.from_user.id)
     items = get_wardrobe_items(user_id)
     if len(items) < 2:
