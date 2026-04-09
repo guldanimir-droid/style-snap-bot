@@ -10,9 +10,8 @@ from aiogram.exceptions import TelegramBadRequest
 
 from database import add_wardrobe_item, get_wardrobe_items, delete_wardrobe_item
 from supabase_utils import upload_wardrobe_image
-from config import TELEGRAM_BOT_TOKEN
+from config import TELEGRAM_BOT_TOKEN, GIGACHAT_CLIENT_ID, GIGACHAT_SECRET
 from gigachat_client import GigaChatClientWrapper
-from config import GIGACHAT_CLIENT_ID, GIGACHAT_SECRET
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -27,6 +26,7 @@ class AddClothesStates(StatesGroup):
     waiting_type = State()
     waiting_description = State()
 
+# ---- Добавление вещи ----
 @router.message(Command("add_clothes"))
 async def cmd_add_clothes(message: Message, state: FSMContext):
     await message.answer("📸 Отправь фотографию вещи, которую хочешь добавить в гардероб.")
@@ -81,6 +81,7 @@ async def add_clothes_description(message: Message, state: FSMContext):
     await message.answer("✅ Вещь добавлена в гардероб!", reply_markup=get_main_keyboard())
     await state.clear()
 
+# ---- Показать гардероб ----
 @router.message(Command("my_wardrobe"))
 async def cmd_my_wardrobe(message: Message):
     user_id = str(message.from_user.id)
@@ -102,10 +103,9 @@ async def cmd_my_wardrobe(message: Message):
                                  caption=caption, reply_markup=buttons, parse_mode="HTML")
         except TelegramBadRequest as e:
             logger.error(f"Не удалось отправить фото {item['image_url']}: {e}")
-            # Можно также удалить запись с битой ссылкой
-            # delete_wardrobe_item(user_id, item['id'])
-            await message.answer(f"⚠️ Не удалось показать одну из вещей (возможно, фото недоступно). Попробуйте удалить её и добавить заново.")
+            await message.answer(f"⚠️ Не удалось показать одну из вещей. Попробуйте удалить её и добавить заново.")
 
+# ---- Удаление вещи ----
 @router.callback_query(lambda c: c.data.startswith("del_wardrobe_"))
 async def delete_wardrobe_callback(callback: CallbackQuery):
     item_id = int(callback.data.split("_")[2])
@@ -114,14 +114,17 @@ async def delete_wardrobe_callback(callback: CallbackQuery):
     await callback.answer("Вещь удалена из гардероба")
     await callback.message.delete()
 
+# ---- Примерка (заглушка) ----
 @router.callback_query(lambda c: c.data.startswith("tryon_"))
 async def tryon_wardrobe_callback(callback: CallbackQuery):
     await callback.answer("Функция примерки скоро появится! Пока воспользуйся @VirtuLookBot", show_alert=True)
 
+# ---- Поиск похожего (заглушка) ----
 @router.callback_query(lambda c: c.data.startswith("find_"))
 async def find_similar_callback(callback: CallbackQuery):
     await callback.answer("Функция поиска похожих вещей в разработке", show_alert=True)
 
+# ---- Что надеть? ----
 @router.message(Command("look"))
 async def cmd_look(message: Message):
     user_id = str(message.from_user.id)
