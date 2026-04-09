@@ -6,6 +6,7 @@ from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardB
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.exceptions import TelegramBadRequest
 
 from database import add_wardrobe_item, get_wardrobe_items, delete_wardrobe_item
 from supabase_utils import upload_wardrobe_image
@@ -21,7 +22,6 @@ gemini = GigaChatClientWrapper(
     client_secret=GIGACHAT_SECRET
 )
 
-# Состояния для добавления вещи
 class AddClothesStates(StatesGroup):
     waiting_photo = State()
     waiting_type = State()
@@ -68,10 +68,8 @@ async def add_clothes_description(message: Message, state: FSMContext):
     photo_file_id = data.get('photo_file_id')
     clothing_type = data.get('clothing_type')
 
-    # Получаем URL фото от Telegram
     file_info = await bot.get_file(photo_file_id)
     file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_info.file_path}"
-    # Загружаем в Supabase Storage
     image_url = await upload_wardrobe_image(user_id, file_url)
     if not image_url:
         await message.answer("❌ Не удалось сохранить фото. Попробуй позже.")
@@ -79,7 +77,7 @@ async def add_clothes_description(message: Message, state: FSMContext):
         return
 
     add_wardrobe_item(user_id, image_url, clothing_type, description)
-    from bot import get_main_keyboard  # чтобы не было циклического импорта, импортируем внутри
+    from bot import get_main_keyboard
     await message.answer("✅ Вещь добавлена в гардероб!", reply_markup=get_main_keyboard())
     await state.clear()
 
@@ -99,8 +97,14 @@ async def cmd_my_wardrobe(message: Message):
             ]
         ])
         caption = f"<b>{item['clothing_type'] or 'Вещь'}</b>\n{item['description'] or ''}"
-        await bot.send_photo(chat_id=message.chat.id, photo=item['image_url'],
-                             caption=caption, reply_markup=buttons, parse_mode="HTML")
+        try:
+            await bot.send_photo(chat_id=message.chat.id, photo=item['image_url'],
+                                 caption=caption, reply_markup=buttons, parse_mode="HTML")
+        except TelegramBadRequest as e:
+            logger.error(f"Не удалось отправить фото {item['image_url']}: {e}")
+            # Можно также удалить запись с битой ссылкой
+            # delete_wardrobe_item(user_id, item['id'])
+            await message.answer(f"⚠️ Не удалось показать одну из вещей (возможно, фото недоступно). Попробуйте удалить её и добавить заново.")
 
 @router.callback_query(lambda c: c.data.startswith("del_wardrobe_"))
 async def delete_wardrobe_callback(callback: CallbackQuery):
