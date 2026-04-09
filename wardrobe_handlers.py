@@ -25,14 +25,12 @@ class AddClothesStates(StatesGroup):
     waiting_type = State()
     waiting_description = State()
 
-# ---------- Команда добавления вещи ----------
 @router.message(Command("add_clothes"))
 async def cmd_add_clothes(message: Message, state: FSMContext):
     logger.info(f"Команда /add_clothes от {message.from_user.id}")
     await message.answer("📸 Отправь фотографию вещи, которую хочешь добавить в гардероб.")
     await state.set_state(AddClothesStates.waiting_photo)
 
-# ---------- Обработчик фото при добавлении ----------
 @router.message(AddClothesStates.waiting_photo, F.photo)
 async def add_clothes_photo(message: Message, state: FSMContext):
     logger.info(f"📸 add_clothes_photo: получили фото от {message.from_user.id}")
@@ -82,7 +80,6 @@ async def add_clothes_description(message: Message, state: FSMContext):
     await message.answer("✅ Вещь добавлена в гардероб!", reply_markup=get_main_keyboard())
     await state.clear()
 
-# ---------- Показать гардероб ----------
 @router.message(Command("my_wardrobe"))
 async def cmd_my_wardrobe(message: Message):
     logger.info(f"Команда /my_wardrobe от {message.from_user.id}")
@@ -107,7 +104,6 @@ async def cmd_my_wardrobe(message: Message):
             logger.error(f"Ошибка отправки фото {item['image_url']}: {e}")
             await message.answer(f"⚠️ Не удалось показать одну из вещей. Попробуйте удалить её и добавить заново.")
 
-# ---------- Удаление вещи ----------
 @router.callback_query(lambda c: c.data and c.data.startswith("del_wardrobe_"))
 async def delete_wardrobe_callback(callback: CallbackQuery):
     item_id = int(callback.data.split("_")[2])
@@ -116,17 +112,14 @@ async def delete_wardrobe_callback(callback: CallbackQuery):
     await callback.answer("Вещь удалена из гардероба")
     await callback.message.delete()
 
-# ---------- Примерка (заглушка) ----------
 @router.callback_query(lambda c: c.data and c.data.startswith("tryon_"))
 async def tryon_wardrobe_callback(callback: CallbackQuery):
     await callback.answer("Функция примерки скоро появится! Пока воспользуйся @VirtuLookBot", show_alert=True)
 
-# ---------- Поиск похожего (заглушка) ----------
 @router.callback_query(lambda c: c.data and c.data.startswith("find_"))
 async def find_similar_callback(callback: CallbackQuery):
     await callback.answer("Функция поиска похожих вещей в разработке", show_alert=True)
 
-# ---------- Что надеть? ----------
 @router.message(Command("look"))
 async def cmd_look(message: Message):
     logger.info(f"Команда /look от {message.from_user.id}")
