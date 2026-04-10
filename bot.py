@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 import aiohttp
@@ -512,10 +513,10 @@ async def buy_100_rub(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ---- Обработчик фото (только когда НЕ в состоянии waiting_photo) ----
+# ---- Обработчик фото (только когда не в состоянии добавления вещи) ----
 @dp.message(F.photo, ~StateFilter(AddClothesStates.waiting_photo))
 async def handle_photo(message: Message, state: FSMContext):
-    # Обычный анализ стиля (без проверки состояния внутри)
+    # Обычный анализ стиля
     current_state = await state.get_state()
     if current_state is not None:
         await state.clear()
@@ -593,6 +594,7 @@ async def handle_photo(message: Message, state: FSMContext):
 # ---- Обработчик текста (пропускаем состояния добавления вещи) ----
 @dp.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
+    # Если находимся в процессе добавления вещи — просто выходим, не мешаем гардеробу
     current_state = await state.get_state()
     if current_state in (AddClothesStates.waiting_type, AddClothesStates.waiting_description):
         return
