@@ -75,7 +75,7 @@ class GigaChatClientWrapper:
                 }
             ],
             "temperature": 0.7,
-            "max_tokens": 1500  # Увеличил, чтобы ответ был полным
+            "max_tokens": 1500
         }
 
         headers = {
@@ -108,7 +108,7 @@ class GigaChatClientWrapper:
         messages.append({"role": "user", "content": prompt})
 
         payload = {
-            "model": "GigaChat-2-Pro",  # И здесь тоже лучше использовать современную модель
+            "model": "GigaChat-2-Pro",  # Для текстовых задач тоже используем современную модель
             "messages": messages,
             "temperature": 0.7,
             "max_tokens": 1500
