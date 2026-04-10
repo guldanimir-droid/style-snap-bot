@@ -17,9 +17,7 @@ class GigaChatClientWrapper:
         self.token_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
         self.api_url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
         self.timeout = aiohttp.ClientTimeout(total=30)
-        # Предупреждение: отключаем проверку SSL, так как сертификаты GigaChat самоподписанные
-        # Для продакшена рекомендуется использовать корректный SSL-контекст, но это требует
-        # установки корневого сертификата в контейнер.
+        # Отключаем проверку SSL (для самоподписанных сертификатов GigaChat)
         self.ssl_context = False
 
     async def _get_token(self):
@@ -52,20 +50,32 @@ class GigaChatClientWrapper:
                 return self.access_token
 
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
+        """
+        Анализирует фото одежды с помощью мультимодальной модели GigaChat-2-Pro.
+        """
         token = await self._get_token()
         img_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        # Формируем data URL для изображения
+        data_url = f"data:image/jpeg;base64,{img_base64}"
 
         payload = {
-            "model": "GigaChat",
+            "model": "GigaChat-2-Pro",  # Используем мультимодальную модель 2-го поколения
             "messages": [
                 {
                     "role": "user",
                     "content": system_prompt,
-                    "image": img_base64
+                    "attachments": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": data_url
+                            }
+                        }
+                    ]
                 }
             ],
             "temperature": 0.7,
-            "max_tokens": 1024
+            "max_tokens": 1500  # Увеличил, чтобы ответ был полным
         }
 
         headers = {
@@ -87,6 +97,9 @@ class GigaChatClientWrapper:
                     raise Exception(f"Unexpected GigaChat response: {data}")
 
     async def generate_text(self, prompt: str, system_prompt: str = None) -> str:
+        """
+        Генерация текстового ответа (без изображения) – для текстовых консультаций.
+        """
         token = await self._get_token()
 
         messages = []
@@ -95,10 +108,10 @@ class GigaChatClientWrapper:
         messages.append({"role": "user", "content": prompt})
 
         payload = {
-            "model": "GigaChat",
+            "model": "GigaChat-2-Pro",  # И здесь тоже лучше использовать современную модель
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 1024
+            "max_tokens": 1500
         }
 
         headers = {
