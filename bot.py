@@ -38,7 +38,7 @@ from middleware import AntiSpamMiddleware
 from supabase_utils import upload_wardrobe_image
 
 # ========== FASHN API НАСТРОЙКИ (замените на свои) ==========
-FASHN_API_KEY = "ВАШ_FASHN_API_KEY"   # ← вставьте ваш ключ
+FASHN_API_KEY = "fa-ie2irJofsoGJ-4Fr9itDyZsrar7hzZ51QhOQm"   # ← вставьте ваш ключ
 FASHN_API_URL = "https://api.fashn.ai/v1/run"  # уточните актуальный эндпоинт
 # ============================================================
 
