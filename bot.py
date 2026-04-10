@@ -39,10 +39,10 @@ from robokassa import generate_payment_link, check_result_signature
 from middleware import AntiSpamMiddleware
 from supabase_utils import upload_wardrobe_image
 
-# ========== FASHN API НАСТРОЙКИ (для примерки) ==========
+# ========== FASHN API НАСТРОЙКИ ==========
 FASHN_API_KEY = "fa-ie2irJofsoGJ-4Fr9itDyZsrar7hzZ51QhOQm"
 FASHN_BASE_URL = "https://api.fashn.ai/v1"
-# ========================================================
+# ========================================
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -188,7 +188,7 @@ def get_type_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-# ---- Проверка на безопасность (можно пропустить) ----
+# ---- Проверка на безопасность (отключена) ----
 async def check_image_safety(image_bytes: bytes) -> bool:
     return True
 
@@ -217,19 +217,26 @@ async def cmd_start(message: Message, state: FSMContext):
             reply_markup=get_gender_keyboard()
         )
     else:
-        await message.answer(
-            "✨ <b>Снова рад тебя видеть!</b>\n\n"
-            "📸 Отправь своё фото — я дам совет по стилю.\n"
-            "💬 Или задай текстовый вопрос о моде.\n"
-            "🔥 Каждый день — новый совет!\n"
-            "👗 Теперь у меня есть виртуальный гардероб! Добавляй вещи и я помогу собрать образ.\n"
-            "👕 А ещё я могу примерить любую вещь на тебя!\n\n"
-            "Бесплатно: 3 анализа + бонусы за приглашения.\n"
-            "Дополнительные анализы можно купить в профиле за рубли.",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+        # Улучшенное приветствие
+        welcome_text = (
+            "✨ <b>Добро пожаловать в мир стиля с AI-стилистом!</b> ✨\n\n"
+            "Я твой персональный помощник в вопросах моды и стиля. Вот что я умею:\n\n"
+            "📸 <b>Анализ стиля</b> – отправь фото, и я оценю твой образ от 1 до 10, дам конкретные советы и рекомендации, где купить вещи.\n"
+            "👗 <b>Виртуальный гардероб</b> – добавляй свои вещи, просматривай их и получай готовые образы на каждый день.\n"
+            "👕 <b>Виртуальная примерка</b> – примеривай любую одежду на свои фото (из гардероба или новую).\n"
+            "💬 <b>Текстовые консультации</b> – задавай любые вопросы о моде и стиле.\n"
+            "🔥 <b>Ежедневные совет</b> – получай короткие модные лайфхаки каждый день.\n\n"
+            "🎁 <b>Первые 3 анализа – бесплатно!</b> А бонусные анализы можно получить за приглашение друзей.\n"
+            "💰 Дополнительные анализы можно купить в профиле.\n\n"
+            "👇 <b>Что хочешь сделать?</b>"
         )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 Пригласить друга", callback_data="show_referral")]
+        ])
+        await message.answer(welcome_text, parse_mode="HTML", reply_markup=keyboard)
+        await message.answer("Выберите действие в меню ниже:", reply_markup=get_main_keyboard())
 
+# ---- Анкета (все шаги) ----
 @dp.message(ProfileStates.waiting_gender, F.text.in_(["👩 Девушка", "👨 Парень"]))
 async def process_gender(message: Message, state: FSMContext):
     user_id = str(message.from_user.id)
@@ -518,7 +525,7 @@ async def daily_tip(message: Message):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Виртуальная примерка (интегрированная) ----
+# ---- Виртуальная примерка ----
 @dp.message(F.text == "👕 Виртуальная примерка")
 async def virtual_tryon_menu(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -642,7 +649,6 @@ async def got_person_photo(message: Message, state: FSMContext):
                 if resp.status == 200:
                     result_bytes = await resp.read()
                     photo_file = BufferedInputFile(result_bytes, filename="tryon.jpg")
-                    # ИСПРАВЛЕНИЕ: увеличен таймаут
                     await bot.send_photo(
                         chat_id=message.chat.id,
                         photo=photo_file,
@@ -663,7 +669,7 @@ async def got_person_photo(message: Message, state: FSMContext):
 async def tryon_command(message: Message, state: FSMContext):
     await virtual_tryon_menu(message, state)
 
-# ---- Гардероб (интегрированный) ----
+# ---- Гардероб (добавление) ----
 @dp.message(Command("add_clothes"))
 async def add_clothes_cmd(message: Message, state: FSMContext):
     await message.answer("📸 Отправь фотографию вещи.")
@@ -796,6 +802,7 @@ async def my_wardrobe_cmd(message: Message):
 async def my_wardrobe_button(message: Message):
     await show_wardrobe(message, 0)
 
+# ---- Случайный образ (look) ----
 @dp.message(Command("look"))
 async def look_cmd(message: Message):
     await look(message)
@@ -863,7 +870,6 @@ async def buy_100_rub(callback: CallbackQuery):
 # ---- Обработчик фото (анализ стиля) ----
 @dp.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
-    # Если пользователь в процессе добавления вещи или примерки — не трогаем
     current_state = await state.get_state()
     if current_state in (AddClothesStates.waiting_photo, TryOnStates.waiting_cloth_photo, TryOnStates.waiting_person_photo):
         return
