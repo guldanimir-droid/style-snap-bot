@@ -11,7 +11,7 @@ import base64
 import io
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputFile
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, BufferedInputFile
 from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
@@ -168,7 +168,7 @@ def get_main_keyboard():
         [KeyboardButton(text="🔗 Рефералка"), KeyboardButton(text="💬 Спросить стилиста")],
         [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="👕 Виртуальная примерка")],
         [KeyboardButton(text="🔥 Ежедневный совет"), KeyboardButton(text="👗 Мой гардероб")],
-        [KeyboardButton(text="🤔 Что надеть?")]
+        [KeyboardButton(text="🤔 Что надеть?"), KeyboardButton(text="➕ Добавить вещь")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
@@ -189,6 +189,7 @@ def get_type_keyboard():
         [KeyboardButton(text="Пропустить")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
 # ---- Проверка на безопасность ----
 async def check_image_safety(image_bytes: bytes) -> bool:
     moderation_prompt = (
@@ -529,7 +530,8 @@ async def daily_tip(message: Message):
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
-    # ---- Виртуальная примерка (интегрированная) ----
+
+# ---- Виртуальная примерка (интегрированная) ----
 @dp.message(F.text == "👕 Виртуальная примерка")
 async def virtual_tryon_menu(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -652,9 +654,11 @@ async def got_person_photo(message: Message, state: FSMContext):
             async with session.get(result_url) as resp:
                 if resp.status == 200:
                     result_bytes = await resp.read()
+                    # Исправлено: используем BufferedInputFile вместо InputFile
+                    photo_file = BufferedInputFile(result_bytes, filename="tryon.jpg")
                     await bot.send_photo(
                         chat_id=message.chat.id,
-                        photo=InputFile(io.BytesIO(result_bytes)),
+                        photo=photo_file,
                         caption="✅ Результат примерки!",
                         reply_markup=get_main_keyboard()
                     )
