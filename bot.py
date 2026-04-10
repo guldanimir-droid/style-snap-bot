@@ -8,9 +8,10 @@ import hashlib
 import random
 import re
 import base64
+import io
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputFile
 from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
@@ -188,7 +189,6 @@ def get_type_keyboard():
         [KeyboardButton(text="Пропустить")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
-
 # ---- Проверка на безопасность ----
 async def check_image_safety(image_bytes: bytes) -> bool:
     moderation_prompt = (
@@ -529,8 +529,7 @@ async def daily_tip(message: Message):
         parse_mode="HTML",
         reply_markup=get_main_keyboard()
     )
-
-# ---- Виртуальная примерка (интегрированная) ----
+    # ---- Виртуальная примерка (интегрированная) ----
 @dp.message(F.text == "👕 Виртуальная примерка")
 async def virtual_tryon_menu(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -655,7 +654,7 @@ async def got_person_photo(message: Message, state: FSMContext):
                     result_bytes = await resp.read()
                     await bot.send_photo(
                         chat_id=message.chat.id,
-                        photo=result_bytes,
+                        photo=InputFile(io.BytesIO(result_bytes)),
                         caption="✅ Результат примерки!",
                         reply_markup=get_main_keyboard()
                     )
