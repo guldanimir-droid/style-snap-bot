@@ -7,6 +7,8 @@ import time
 import hashlib
 import random
 import re
+import base64
+import hmac
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -37,10 +39,10 @@ from robokassa import generate_payment_link, check_result_signature
 from middleware import AntiSpamMiddleware
 from supabase_utils import upload_wardrobe_image
 
-# ========== FASHN API НАСТРОЙКИ (замените на свои) ==========
-FASHN_API_KEY = "fa-ie2irJofsoGJ-4Fr9itDyZsrar7hzZ51QhOQm"   # ← вставьте ваш ключ
-FASHN_API_URL = "https://api.fashn.ai/v1/run"  # уточните актуальный эндпоинт
-# ============================================================
+# ========== FASHN API НАСТРОЙКИ ==========
+FASHN_API_KEY = "fa-ie2irJofsoGJ-4Fr9itDyZsrar7hzZ51QhOQm"   # ← ВСТАВЬТЕ СВОЙ КЛЮЧ
+FASHN_BASE_URL = "https://api.fashn.ai/v1"
+# ========================================
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), "INFO"))
 logger = logging.getLogger(__name__)
@@ -65,7 +67,70 @@ class AddClothesStates(StatesGroup):
 class TryOnStates(StatesGroup):
     waiting_person_photo = State()
     waiting_cloth_photo = State()
-    waiting_cloth_from_wardrobe = State()  # ожидаем ID выбранной вещи из гардероба
+
+# ========== Асинхронный клиент FASHN ==========
+class FashnClient:
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+
+    @staticmethod
+    def _b64(img_bytes: bytes, mime: str = "jpeg") -> str:
+        return f"data:image/{mime};base64," + base64.b64encode(img_bytes).decode()
+
+    async def run(self, model_bytes: bytes, garment_bytes: bytes) -> str:
+        """Отправляет запрос на генерацию примерки, возвращает prediction_id"""
+        payload = {
+            "model_name": "tryon-v1.6",
+            "inputs": {
+                "model_image": self._b64(model_bytes),
+                "garment_image": self._b64(garment_bytes),
+                "category": "auto",
+                "segmentation_free": True,
+                "moderation_level": "permissive",
+                "garment_photo_type": "auto"
+            }
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{FASHN_BASE_URL}/run", json=payload, headers=self.headers) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    logger.error(f"FASHN API error {resp.status}: {text}")
+                    raise Exception(f"API error {resp.status}: {text}")
+                data = await resp.json()
+                prediction_id = data.get("id")
+                if not prediction_id:
+                    raise Exception("No prediction ID in response")
+                return prediction_id
+
+    async def poll(self, pred_id: str, timeout: int = 60) -> str:
+        """Ожидает завершения генерации, возвращает URL результата"""
+        start = time.time()
+        async with aiohttp.ClientSession() as session:
+            while time.time() - start < timeout:
+                async with session.get(f"{FASHN_BASE_URL}/status/{pred_id}", headers=self.headers) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        logger.error(f"Status check error {resp.status}: {text}")
+                        raise Exception(f"Status error {resp.status}")
+                    data = await resp.json()
+                    status = data.get("status")
+                    logger.info(f"FASHN polling status: {status}")
+                    if status == "completed":
+                        output = data.get("output")
+                        if output and isinstance(output, list) and len(output) > 0:
+                            return output[0]
+                        raise Exception("No output in completed response")
+                    elif status == "failed":
+                        error = data.get("error", "Unknown error")
+                        raise Exception(f"Generation failed: {error}")
+                await asyncio.sleep(3)
+        raise TimeoutError("FASHN API timeout")
+
+fashn_client = FashnClient(FASHN_API_KEY)
 
 # ========== Форматирование ==========
 def enhance_formatting(text: str) -> str:
@@ -125,32 +190,6 @@ def get_type_keyboard():
         [KeyboardButton(text="Пропустить")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
-
-# ---- Вспомогательная функция для вызова FASHN API ----
-async def call_fashn_tryon(person_image_url: str, cloth_image_url: str) -> str:
-    """
-    Отправляет два URL в FASHN API и возвращает URL результата (фото с примеркой).
-    """
-    headers = {
-        "Authorization": f"Bearer {FASHN_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "person_image": person_image_url,
-        "cloth_image": cloth_image_url
-    }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(FASHN_API_URL, json=payload, headers=headers) as resp:
-            if resp.status != 200:
-                error_text = await resp.text()
-                logger.error(f"FASHN API error: {resp.status} {error_text}")
-                raise Exception(f"API error {resp.status}")
-            data = await resp.json()
-            # Предполагаем, что API возвращает поле result_url
-            result_url = data.get("result_url") or data.get("output") or data.get("image_url")
-            if not result_url:
-                raise Exception("Не удалось получить URL результата")
-            return result_url
 
 # ---- Проверка на безопасность ----
 async def check_image_safety(image_bytes: bytes) -> bool:
@@ -493,90 +532,30 @@ async def daily_tip(message: Message):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Виртуальная примерка (активная) ----
+# ---- Виртуальная примерка (интегрированная) ----
 @dp.message(F.text == "👕 Виртуальная примерка")
-async def virtual_tryon_menu(message: Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👗 Из гардероба", callback_data="tryon_from_wardrobe")],
-        [InlineKeyboardButton(text="📷 Загрузить новую вещь", callback_data="tryon_new_cloth")]
-    ])
+async def virtual_tryon_start(message: Message, state: FSMContext):
     await message.answer(
         "👕 <b>Виртуальная примерка</b>\n\n"
-        "Выбери, откуда взять вещь для примерки:",
+        "Пришлите фото человека в полный рост.",
         parse_mode="HTML",
-        reply_markup=kb
+        reply_markup=ReplyKeyboardRemove()
     )
-
-@dp.callback_query(lambda c: c.data == "tryon_from_wardrobe")
-async def tryon_from_wardrobe(callback: CallbackQuery, state: FSMContext):
-    user_id = str(callback.from_user.id)
-    items = database.get_wardrobe_items(user_id)
-    if not items:
-        await callback.message.answer("📭 Твой гардероб пуст. Сначала добавь вещи через «➕ Добавить вещь».")
-        await callback.answer()
-        return
-    # Создаём инлайн-кнопки с вещами (по 3 в ряд)
-    buttons = []
-    row = []
-    for item in items:
-        row.append(InlineKeyboardButton(text=f"{item['clothing_type'] or 'Вещь'} #{item['id']}", callback_data=f"select_cloth_{item['id']}"))
-        if len(row) == 3:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    buttons.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="cancel_tryon")])
-    markup = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await callback.message.answer("Выбери вещь для примерки:", reply_markup=markup)
-    await callback.answer()
-    await state.set_state(TryOnStates.waiting_cloth_from_wardrobe)
-
-@dp.callback_query(lambda c: c.data.startswith("select_cloth_"))
-async def select_cloth_for_tryon(callback: CallbackQuery, state: FSMContext):
-    item_id = int(callback.data.split("_")[2])
-    user_id = str(callback.from_user.id)
-    # Получаем URL вещи из базы
-    items = database.get_wardrobe_items(user_id)
-    cloth_url = None
-    for item in items:
-        if item['id'] == item_id:
-            cloth_url = item['image_url']
-            break
-    if not cloth_url:
-        await callback.message.answer("❌ Вещь не найдена.")
-        await callback.answer()
-        return
-    await state.update_data(cloth_url=cloth_url)
-    await callback.message.answer("📸 Теперь отправь фото человека (в полный рост) для примерки.")
-    await state.set_state(TryOnStates.waiting_person_photo)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "tryon_new_cloth")
-async def tryon_new_cloth(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("📸 Отправь фото одежды, которую хочешь примерить.")
-    await state.set_state(TryOnStates.waiting_cloth_photo)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "cancel_tryon")
-async def cancel_tryon(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.answer("❌ Примерка отменена.", reply_markup=get_main_keyboard())
-    await callback.answer()
-
-@dp.message(TryOnStates.waiting_cloth_photo, F.photo)
-async def got_cloth_photo(message: Message, state: FSMContext):
-    file_id = message.photo[-1].file_id
-    file_info = await bot.get_file(file_id)
-    file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_info.file_path}"
-    await state.update_data(cloth_url=file_url)
-    await message.answer("📸 Теперь отправь фото человека (в полный рост).")
     await state.set_state(TryOnStates.waiting_person_photo)
 
 @dp.message(TryOnStates.waiting_person_photo, F.photo)
 async def got_person_photo(message: Message, state: FSMContext):
+    file_id = message.photo[-1].file_id
+    file_info = await bot.get_file(file_id)
+    file_bytes = await bot.download_file(file_info.file_path)
+    await state.update_data(person_bytes=file_bytes)
+    await message.answer("Теперь пришлите фото одежды, которую хотите примерить.")
+    await state.set_state(TryOnStates.waiting_cloth_photo)
+
+@dp.message(TryOnStates.waiting_cloth_photo, F.photo)
+async def got_cloth_photo(message: Message, state: FSMContext):
+    # Проверяем лимиты (используем ту же систему, что и для анализов)
     user_id = str(message.from_user.id)
-    # Проверяем лимиты (используем can_request, но примерка – это не анализ стиля? Можно отдельный счётчик или использовать те же)
-    # Для простоты используем те же лимиты (3 бесплатных + купленные). Если хотите отдельный – доработайте.
     if not database.can_request(user_id):
         await message.reply(
             "❌ У вас закончились бесплатные запросы.\n"
@@ -585,33 +564,46 @@ async def got_person_photo(message: Message, state: FSMContext):
         )
         await state.clear()
         return
-    # Получаем ссылку на фото человека
-    person_file_id = message.photo[-1].file_id
-    person_file_info = await bot.get_file(person_file_id)
-    person_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{person_file_info.file_path}"
+
     data = await state.get_data()
-    cloth_url = data.get('cloth_url')
-    if not cloth_url:
-        await message.answer("❌ Ошибка: не найдена вещь для примерки. Начни заново с /tryon.")
+    person_bytes = data.get('person_bytes')
+    if not person_bytes:
+        await message.answer("❌ Ошибка: фото человека не найдено. Начните заново с /tryon.")
         await state.clear()
         return
-    # Отправляем запрос в FASHN API
-    await message.answer("🖼️ Выполняется примерка... Это может занять до 30 секунд.")
+
+    cloth_file_id = message.photo[-1].file_id
+    cloth_file_info = await bot.get_file(cloth_file_id)
+    cloth_bytes = await bot.download_file(cloth_file_info.file_path)
+
+    await message.answer("🖼️ Выполняется примерка... Это может занять до минуты.")
     try:
-        result_url = await call_fashn_tryon(person_url, cloth_url)
-        # Отправляем результат
-        await bot.send_photo(chat_id=message.chat.id, photo=result_url, caption="✅ Результат примерки!")
-        # Списываем один запрос (если используете can_request/use_request)
-        database.use_request(user_id)
+        prediction_id = await fashn_client.run(person_bytes, cloth_bytes)
+        result_url = await fashn_client.poll(prediction_id)
+        # Скачиваем результат и отправляем пользователю
+        async with aiohttp.ClientSession() as session:
+            async with session.get(result_url) as resp:
+                if resp.status == 200:
+                    result_bytes = await resp.read()
+                    await bot.send_photo(
+                        chat_id=message.chat.id,
+                        photo=result_bytes,
+                        caption="✅ Результат примерки!",
+                        reply_markup=get_main_keyboard()
+                    )
+                    # Списываем один запрос
+                    database.use_request(user_id)
+                else:
+                    await message.answer("❌ Не удалось получить изображение результата.", reply_markup=get_main_keyboard())
     except Exception as e:
-        logger.error(f"Ошибка примерки: {e}")
-        await message.answer(f"❌ Не удалось выполнить примерку: {str(e)}")
+        logger.exception("Ошибка при генерации примерки")
+        await message.answer(f"⚠️ Ошибка: {str(e)}", reply_markup=get_main_keyboard())
     finally:
         await state.clear()
 
 @dp.message(Command("tryon"))
-async def tryon_command(message: Message):
-    await virtual_tryon_menu(message)
+async def tryon_command(message: Message, state: FSMContext):
+    await virtual_tryon_start(message, state)
 
 # ---- Гардероб (интегрированный) ----
 @dp.message(Command("add_clothes"))
@@ -772,7 +764,7 @@ async def buy_100_rub(callback: CallbackQuery):
 async def handle_photo(message: Message, state: FSMContext):
     # Если пользователь в процессе добавления вещи или примерки — не трогаем
     current_state = await state.get_state()
-    if current_state in (AddClothesStates.waiting_photo, TryOnStates.waiting_cloth_photo, TryOnStates.waiting_person_photo):
+    if current_state in (AddClothesStates.waiting_photo, TryOnStates.waiting_person_photo, TryOnStates.waiting_cloth_photo):
         return
 
     # Обычный анализ стиля
