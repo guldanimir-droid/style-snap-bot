@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import aiohttp
@@ -9,7 +8,6 @@ import hashlib
 import random
 import re
 import base64
-import hmac
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -41,7 +39,7 @@ from middleware import AntiSpamMiddleware
 from supabase_utils import upload_wardrobe_image
 
 # ========== FASHN API НАСТРОЙКИ ==========
-FASHN_API_KEY = "fa-ie2irJofsoGJ-4Fr9itDyZsrar7hzZ51QhOQm"   # Ваш ключ
+FASHN_API_KEY = "fa-ie2irJofsoGJ-4Fr9itDyZsrar7hzZ51QhOQm"
 FASHN_BASE_URL = "https://api.fashn.ai/v1"
 # ========================================
 
@@ -67,7 +65,7 @@ class AddClothesStates(StatesGroup):
 
 class TryOnStates(StatesGroup):
     waiting_person_photo = State()
-    waiting_cloth_photo = State()
+    waiting_cloth_photo = State()          # для новой загружаемой вещи
     waiting_cloth_from_wardrobe = State()  # ожидаем ID выбранной вещи из гардероба
 
 # ========== Асинхронный клиент FASHN ==========
