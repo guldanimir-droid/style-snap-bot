@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.exceptions import TelegramBadRequest
 
-from database import add_wardrobe_item, get_wardrobe_items, delete_wardrobe_item
+from database import add_wardrobe_item, get_wardrobe_items, delete_wardrobe_item, add_look
 from supabase_utils import upload_wardrobe_image
 from config import TELEGRAM_BOT_TOKEN, GIGACHAT_CLIENT_ID, GIGACHAT_SECRET
 from gigachat_client import GigaChatClientWrapper
@@ -20,7 +20,6 @@ gemini = GigaChatClientWrapper(
     client_secret=GIGACHAT_SECRET
 )
 
-# Клавиатура главного меню (дублируется, чтобы избежать циклического импорта)
 def get_main_keyboard():
     kb = [
         [KeyboardButton(text="📸 Анализировать"), KeyboardButton(text="👤 Мой профиль")],
@@ -143,6 +142,8 @@ async def cmd_look(message: Message):
     prompt = f"Ты стилист. Из этих вещей: {', '.join(descriptions)}. Составь стильный образ на сегодня. Напиши кратко, что надеть и почему."
     try:
         answer = await gemini.generate_text(prompt)
+        # Сохраняем образ в таблицу looks
+        add_look(user_id, [str(item['id']) for item in selected], answer)
         await message.answer(f"✨ <b>Твой образ на сегодня</b>\n\n{answer}", parse_mode="HTML")
     except Exception as e:
         logger.error(f"Ошибка генерации образа: {e}")
