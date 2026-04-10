@@ -5,6 +5,7 @@ import logging
 import asyncio
 import uuid
 import time
+from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +17,8 @@ class GigaChatClientWrapper:
         self.token_expiry = 0
         self.token_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
         self.api_url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
-        self.timeout = aiohttp.ClientTimeout(total=30)
-        # Отключаем проверку SSL (для самоподписанных сертификатов GigaChat)
+        self.files_url = "https://gigachat.devices.sberbank.ru/api/v1/files"
+        self.timeout = aiohttp.ClientTimeout(total=60)  # увеличен для загрузки файлов
         self.ssl_context = False
 
     async def _get_token(self):
@@ -49,27 +50,50 @@ class GigaChatClientWrapper:
                 self.token_expiry = now + expires_in - 60
                 return self.access_token
 
+    async def _upload_file(self, file_bytes: bytes, filename: str = "image.jpg") -> str:
+        """Загружает файл на сервер GigaChat и возвращает file_id."""
+        token = await self._get_token()
+        # Определяем MIME тип
+        mime = "image/jpeg"  # можно определять динамически, но для фото подходит
+        # Формируем multipart/form-data
+        data = aiohttp.FormData()
+        data.add_field('file', file_bytes, filename=filename, content_type=mime)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+        async with aiohttp.ClientSession(timeout=self.timeout) as session:
+            async with session.post(self.files_url, headers=headers, data=data, ssl=self.ssl_context) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"File upload failed: status={resp.status}, body={error_text}")
+                    raise Exception(f"File upload error {resp.status}: {error_text}")
+                result = await resp.json()
+                file_id = result.get("id")
+                if not file_id:
+                    raise Exception("No file_id in response")
+                logger.info(f"File uploaded, id={file_id}")
+                return file_id
+
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
         """
-        Анализирует фото одежды с помощью мультимодальной модели GigaChat-2-Pro.
+        Анализирует фото одежды с помощью GigaChat-2-Pro.
+        Сначала загружает фото, затем отправляет запрос с file_id.
         """
+        # 1. Загружаем файл
+        file_id = await self._upload_file(image_bytes, filename="style.jpg")
+        # 2. Формируем запрос с attachment
         token = await self._get_token()
-        img_base64 = base64.b64encode(image_bytes).decode('utf-8')
-        # Формируем data URL для изображения
-        data_url = f"data:image/jpeg;base64,{img_base64}"
-
         payload = {
-            "model": "GigaChat-2-Pro",  # Используем мультимодальную модель 2-го поколения
+            "model": "GigaChat-2-Pro",
             "messages": [
                 {
                     "role": "user",
                     "content": system_prompt,
                     "attachments": [
                         {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": data_url
-                            }
+                            "type": "file",
+                            "file_id": file_id
                         }
                     ]
                 }
@@ -77,13 +101,11 @@ class GigaChatClientWrapper:
             "temperature": 0.7,
             "max_tokens": 1500
         }
-
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
-
         async with aiohttp.ClientSession(timeout=self.timeout) as session:
             async with session.post(self.api_url, json=payload, headers=headers, ssl=self.ssl_context) as resp:
                 if resp.status != 200:
@@ -97,29 +119,23 @@ class GigaChatClientWrapper:
                     raise Exception(f"Unexpected GigaChat response: {data}")
 
     async def generate_text(self, prompt: str, system_prompt: str = None) -> str:
-        """
-        Генерация текстового ответа (без изображения) – для текстовых консультаций.
-        """
+        """Генерация текстового ответа (без изображения)."""
         token = await self._get_token()
-
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
-
         payload = {
-            "model": "GigaChat-2-Pro",  # Для текстовых задач тоже используем современную модель
+            "model": "GigaChat-2-Pro",
             "messages": messages,
             "temperature": 0.7,
             "max_tokens": 1500
         }
-
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
-
         async with aiohttp.ClientSession(timeout=self.timeout) as session:
             async with session.post(self.api_url, json=payload, headers=headers, ssl=self.ssl_context) as resp:
                 if resp.status != 200:
