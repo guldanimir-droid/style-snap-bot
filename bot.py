@@ -642,11 +642,13 @@ async def got_person_photo(message: Message, state: FSMContext):
                 if resp.status == 200:
                     result_bytes = await resp.read()
                     photo_file = BufferedInputFile(result_bytes, filename="tryon.jpg")
+                    # ИСПРАВЛЕНИЕ: увеличен таймаут
                     await bot.send_photo(
                         chat_id=message.chat.id,
                         photo=photo_file,
                         caption="✅ Результат примерки!",
-                        reply_markup=get_main_keyboard()
+                        reply_markup=get_main_keyboard(),
+                        request_timeout=120
                     )
                     database.use_request(user_id)
                 else:
