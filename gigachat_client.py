@@ -18,7 +18,7 @@ class GigaChatClientWrapper:
         self.token_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
         self.api_url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
         self.files_url = "https://gigachat.devices.sberbank.ru/api/v1/files"
-        self.timeout = aiohttp.ClientTimeout(total=60)  # увеличен для загрузки файлов
+        self.timeout = aiohttp.ClientTimeout(total=60)
         self.ssl_context = False
 
     async def _get_token(self):
@@ -51,13 +51,10 @@ class GigaChatClientWrapper:
                 return self.access_token
 
     async def _upload_file(self, file_bytes: bytes, filename: str = "image.jpg") -> str:
-        """Загружает файл на сервер GigaChat и возвращает file_id."""
         token = await self._get_token()
-        # Определяем MIME тип
-        mime = "image/jpeg"  # можно определять динамически, но для фото подходит
-        # Формируем multipart/form-data
         data = aiohttp.FormData()
-        data.add_field('file', file_bytes, filename=filename, content_type=mime)
+        data.add_field('file', file_bytes, filename=filename, content_type='image/jpeg')
+        data.add_field('purpose', 'general')   # обязательный параметр
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json"
@@ -76,13 +73,7 @@ class GigaChatClientWrapper:
                 return file_id
 
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
-        """
-        Анализирует фото одежды с помощью GigaChat-2-Pro.
-        Сначала загружает фото, затем отправляет запрос с file_id.
-        """
-        # 1. Загружаем файл
         file_id = await self._upload_file(image_bytes, filename="style.jpg")
-        # 2. Формируем запрос с attachment
         token = await self._get_token()
         payload = {
             "model": "GigaChat-2-Pro",
@@ -119,7 +110,6 @@ class GigaChatClientWrapper:
                     raise Exception(f"Unexpected GigaChat response: {data}")
 
     async def generate_text(self, prompt: str, system_prompt: str = None) -> str:
-        """Генерация текстового ответа (без изображения)."""
         token = await self._get_token()
         messages = []
         if system_prompt:
