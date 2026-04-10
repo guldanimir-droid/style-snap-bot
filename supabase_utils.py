@@ -12,7 +12,7 @@ async def upload_wardrobe_image(user_id: str, file_url: str) -> str:
     Скачивает фото по URL и загружает в Supabase Storage, возвращает публичный URL.
     """
     # Укажите точное имя вашего бакета (как в Supabase)
-    bucket_name = "Гардероб"   # или "wardrobe" – проверьте и исправьте
+    bucket_name = "wardrobe"   # или "wardrobe" – проверьте и исправьте
 
     # Генерируем уникальное имя файла
     file_name = f"{user_id}_{int(datetime.now().timestamp())}.jpg"
