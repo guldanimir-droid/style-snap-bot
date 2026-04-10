@@ -1,8 +1,6 @@
 import aiohttp
-import base64
 import json
 import logging
-import asyncio
 import uuid
 import time
 from io import BytesIO
@@ -54,7 +52,7 @@ class GigaChatClientWrapper:
         token = await self._get_token()
         data = aiohttp.FormData()
         data.add_field('file', file_bytes, filename=filename, content_type='image/jpeg')
-        data.add_field('purpose', 'general')   # обязательный параметр
+        data.add_field('purpose', 'general')
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json"
@@ -73,25 +71,28 @@ class GigaChatClientWrapper:
                 return file_id
 
     async def analyze_style(self, image_bytes: bytes, system_prompt: str) -> str:
+        # Загружаем файл
         file_id = await self._upload_file(image_bytes, filename="style.jpg")
         token = await self._get_token()
+        
+        # Формируем payload в соответствии со спецификацией GigaChat
+        # Используем поле files и правильную структуру messages
         payload = {
             "model": "GigaChat-2-Pro",
             "messages": [
                 {
                     "role": "user",
                     "content": system_prompt,
-                    "attachments": [
-                        {
-                            "type": "file",
-                            "file_id": file_id
-                        }
-                    ]
+                    "files": [file_id]   # <-- ключевое изменение
                 }
             ],
             "temperature": 0.7,
             "max_tokens": 1500
         }
+        
+        # Логируем payload для отладки
+        logger.info(f"Sending payload: {json.dumps(payload, ensure_ascii=False)}")
+        
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
