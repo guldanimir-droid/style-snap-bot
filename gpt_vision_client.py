@@ -20,7 +20,7 @@ class GPTVisionClient:
         img_base64 = base64.b64encode(image_bytes).decode('utf-8')
         data_url = f"data:image/jpeg;base64,{img_base64}"
         payload = {
-            "model": "openai/gpt-4o-mini",  # дешёвая и быстрая модель
+            "model": "openai/gpt-4o-mini",  # дешёвая и быстрая, хорошо понимает одежду
             "messages": [
                 {
                     "role": "user",
