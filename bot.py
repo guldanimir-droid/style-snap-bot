@@ -11,7 +11,7 @@ import base64
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from aiogram.filters import Command, CommandStart, CommandObject, StateFilter
+from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -65,8 +65,8 @@ class AddClothesStates(StatesGroup):
 
 class TryOnStates(StatesGroup):
     waiting_person_photo = State()
-    waiting_cloth_photo = State()          # для новой загружаемой вещи
-    waiting_cloth_from_wardrobe = State()  # ожидаем ID выбранной вещи из гардероба
+    waiting_cloth_photo = State()
+    waiting_cloth_from_wardrobe = State()
 
 # ========== Асинхронный клиент FASHN ==========
 class FashnClient:
@@ -530,7 +530,7 @@ async def daily_tip(message: Message):
         reply_markup=get_main_keyboard()
     )
 
-# ---- Виртуальная примерка (с выбором из гардероба) ----
+# ---- Виртуальная примерка (интегрированная) ----
 @dp.message(F.text == "👕 Виртуальная примерка")
 async def virtual_tryon_menu(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -602,7 +602,8 @@ async def cancel_tryon(callback: CallbackQuery, state: FSMContext):
 async def got_cloth_photo(message: Message, state: FSMContext):
     file_id = message.photo[-1].file_id
     file_info = await bot.get_file(file_id)
-    file_bytes = await bot.download_file(file_info.file_path)
+    file_bytes_io = await bot.download_file(file_info.file_path)
+    file_bytes = file_bytes_io.getvalue()
     await state.update_data(cloth_bytes=file_bytes)
     await message.answer("📸 Теперь отправь фото человека (в полный рост).")
     await state.set_state(TryOnStates.waiting_person_photo)
@@ -621,15 +622,14 @@ async def got_person_photo(message: Message, state: FSMContext):
 
     person_file_id = message.photo[-1].file_id
     person_file_info = await bot.get_file(person_file_id)
-    person_bytes = await bot.download_file(person_file_info.file_path)
+    person_bytes_io = await bot.download_file(person_file_info.file_path)
+    person_bytes = person_bytes_io.getvalue()
 
     data = await state.get_data()
     cloth_url = data.get('cloth_url')
     cloth_bytes = data.get('cloth_bytes')
 
-    # Получаем bytes одежды: либо из URL (если из гардероба), либо из загруженного фото
     if cloth_url:
-        # Скачиваем по URL
         async with aiohttp.ClientSession() as session:
             async with session.get(cloth_url) as resp:
                 if resp.status != 200:
@@ -638,8 +638,8 @@ async def got_person_photo(message: Message, state: FSMContext):
                     return
                 cloth_bytes = await resp.read()
     elif cloth_bytes:
-        # уже есть
-        pass
+        if hasattr(cloth_bytes, 'getvalue'):
+            cloth_bytes = cloth_bytes.getvalue()
     else:
         await message.answer("❌ Ошибка: вещь не найдена. Начните заново с /tryon.")
         await state.clear()
@@ -829,12 +829,10 @@ async def buy_100_rub(callback: CallbackQuery):
 # ---- Обработчик фото (анализ стиля) ----
 @dp.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
-    # Если пользователь в процессе добавления вещи или примерки — не трогаем
     current_state = await state.get_state()
     if current_state in (AddClothesStates.waiting_photo, TryOnStates.waiting_cloth_photo, TryOnStates.waiting_person_photo):
         return
 
-    # Обычный анализ стиля
     if current_state is not None:
         await state.clear()
     user_id = str(message.from_user.id)
