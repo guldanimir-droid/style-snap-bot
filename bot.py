@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import aiohttp
@@ -44,7 +43,6 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 dp.include_router(wardrobe_router)
-
 dp.message.middleware(AntiSpamMiddleware(time_limit=10))
 
 gemini = GigaChatClientWrapper(
