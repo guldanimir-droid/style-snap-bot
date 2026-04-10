@@ -468,14 +468,6 @@ async def virtual_tryon_handler(message: Message):
     )
 
 # ---- Гардероб (интегрированный) ----
-@dp.message(F.text == "👗 Мой гардероб")
-async def wardrobe_menu(message: Message):
-    await message.answer(
-        "🧥 <b>Твой виртуальный гардероб</b>\n\n"
-        "Здесь ты можешь добавлять вещи, смотреть их и получать готовые образы.",
-        reply_markup=get_main_keyboard()
-    )
-
 @dp.message(Command("add_clothes"))
 async def add_clothes_cmd(message: Message, state: FSMContext):
     await message.answer("📸 Отправь фотографию вещи.")
@@ -514,17 +506,10 @@ async def got_description(message: Message, state: FSMContext):
 
     file_info = await bot.get_file(photo_file_id)
     file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_info.file_path}"
+    logger.info(f"Загружаем фото из Telegram: {file_url}")
 
-    bucket_name = "wardrobe"   # название бакета в Supabase Storage
-    file_name = f"{user_id}_{int(datetime.now().timestamp())}.jpg"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(file_url) as resp:
-                image_bytes = await resp.read()
-        supabase.storage.from_(bucket_name).upload(file_name, image_bytes, {"content-type": "image/jpeg"})
-        public_url = supabase.storage.from_(bucket_name).get_public_url(file_name)
-    except Exception as e:
-        logger.error(f"Ошибка загрузки фото: {e}")
+    public_url = await upload_wardrobe_image(user_id, file_url)
+    if not public_url:
         await message.answer("❌ Не удалось сохранить фото. Проверьте настройки бакета.")
         await state.clear()
         return
@@ -558,11 +543,16 @@ async def show_wardrobe(message: Message):
         ])
         caption = f"<b>{item['clothing_type'] or 'Вещь'}</b>\n{item['description'] or ''}"
         try:
+            # Проверяем, что URL начинается с http и содержит wardrobe
+            if not item['image_url'].startswith('http'):
+                logger.warning(f"Некорректный URL: {item['image_url']}")
+                await message.answer(f"⚠️ Некорректная ссылка на фото для вещи ID {item['id']}.")
+                continue
             await bot.send_photo(chat_id=message.chat.id, photo=item['image_url'],
                                  caption=caption, reply_markup=buttons, parse_mode="HTML")
         except Exception as e:
-            logger.error(f"Ошибка отправки фото: {e}")
-            await message.answer(f"⚠️ Не удалось показать одну из вещей (ID {item['id']}).")
+            logger.error(f"Ошибка отправки фото {item['image_url']}: {e}")
+            await message.answer(f"⚠️ Не удалось показать вещь (ID {item['id']}). Возможно, фото удалено или ссылка недействительна.")
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("del_wardrobe_"))
 async def delete_wardrobe_item_callback(callback: CallbackQuery):
