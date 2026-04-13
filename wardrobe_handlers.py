@@ -1,7 +1,7 @@
 import logging
 import random
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -35,6 +35,9 @@ class AddClothesStates(StatesGroup):
     waiting_photo = State()
     waiting_type = State()
     waiting_description = State()
+
+class TryOnStates(StatesGroup):
+    waiting_person_photo = State()
 
 @router.message(Command("add_clothes"))
 async def cmd_add_clothes(message: Message, state: FSMContext):
@@ -90,29 +93,36 @@ async def add_clothes_description(message: Message, state: FSMContext):
     await message.answer("✅ Вещь добавлена в гардероб!", reply_markup=get_main_keyboard())
     await state.clear()
 
+# ==================== НОВЫЙ ВАРИАНТ ГАРДЕРОБА (АЛЬБОМ + КНОПКИ) ====================
 @router.message(Command("my_wardrobe"))
 async def cmd_my_wardrobe(message: Message):
     logger.info(f"Команда /my_wardrobe от {message.from_user.id}")
     user_id = str(message.from_user.id)
     items = get_wardrobe_items(user_id)
     if not items:
-        await message.answer("📭 Твой гардероб пуст. Добавь вещи командой /add_clothes")
+        await message.answer("📭 Твой гардероб пуст. Добавь вещи командой /add_clothes", reply_markup=get_main_keyboard())
         return
+
+    # Отправляем альбом с фото (группируем по 10)
+    batch_size = 10
+    for i in range(0, len(items), batch_size):
+        batch = items[i:i+batch_size]
+        media = []
+        for j, item in enumerate(batch):
+            caption = f"<b>{item['clothing_type'] or 'Вещь'}</b>\n{item['description'] or ''}" if j == 0 else ""
+            media.append(InputMediaPhoto(media=item['image_url'], caption=caption, parse_mode="HTML"))
+        await bot.send_media_group(chat_id=message.chat.id, media=media)
+
+    # Формируем отдельное сообщение со списком кнопок для каждой вещи
+    keyboard_buttons = []
     for item in items:
-        buttons = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🧥 Примерь", callback_data=f"tryon_{item['id']}"),
-                InlineKeyboardButton(text="🔍 Найти похожее", callback_data=f"find_{item['id']}"),
-                InlineKeyboardButton(text="❌ Удалить", callback_data=f"del_wardrobe_{item['id']}")
-            ]
-        ])
-        caption = f"<b>{item['clothing_type'] or 'Вещь'}</b>\n{item['description'] or ''}"
-        try:
-            await bot.send_photo(chat_id=message.chat.id, photo=item['image_url'],
-                                 caption=caption, reply_markup=buttons, parse_mode="HTML")
-        except TelegramBadRequest as e:
-            logger.error(f"Ошибка отправки фото {item['image_url']}: {e}")
-            await message.answer(f"⚠️ Не удалось показать одну из вещей. Попробуйте удалить её и добавить заново.")
+        row = [
+            InlineKeyboardButton(text=f"❌ Удалить {item['clothing_type'] or 'вещь'}", callback_data=f"del_wardrobe_{item['id']}"),
+            InlineKeyboardButton(text=f"🧥 Примерь {item['clothing_type'] or 'вещь'}", callback_data=f"tryon_{item['id']}")
+        ]
+        keyboard_buttons.append(row)
+    markup = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    await message.answer("🗂 Вот все вещи из твоего гардероба. Выбери действие:", reply_markup=markup)
 
 @router.callback_query(lambda c: c.data and c.data.startswith("del_wardrobe_"))
 async def delete_wardrobe_callback(callback: CallbackQuery):
@@ -120,12 +130,51 @@ async def delete_wardrobe_callback(callback: CallbackQuery):
     user_id = str(callback.from_user.id)
     delete_wardrobe_item(user_id, item_id)
     await callback.answer("Вещь удалена из гардероба")
+    # Удаляем сообщение с кнопками, чтобы пользователь не кликал по удалённой вещи
     await callback.message.delete()
+    await callback.message.answer("Гардероб обновлён. Нажми /my_wardrobe для просмотра.")
 
 @router.callback_query(lambda c: c.data and c.data.startswith("tryon_"))
-async def tryon_wardrobe_callback(callback: CallbackQuery):
-    await callback.answer("Функция примерки скоро появится! Пока воспользуйся @VirtuLookBot", show_alert=True)
+async def tryon_wardrobe_callback(callback: CallbackQuery, state: FSMContext):
+    item_id = int(callback.data.split("_")[1])
+    user_id = str(callback.from_user.id)
+    items = get_wardrobe_items(user_id)
+    cloth_url = None
+    for item in items:
+        if item['id'] == item_id:
+            cloth_url = item['image_url']
+            break
+    if not cloth_url:
+        await callback.message.answer("❌ Вещь не найдена.")
+        await callback.answer()
+        return
+    await state.update_data(cloth_url=cloth_url)
+    await callback.message.answer("📸 Теперь отправь фото человека (в полный рост) для примерки.")
+    await state.set_state(TryOnStates.waiting_person_photo)
+    await callback.answer()
 
+# Обработчик получения фото человека для примерки
+@router.message(TryOnStates.waiting_person_photo, F.photo)
+async def tryon_person_photo(message: Message, state: FSMContext):
+    data = await state.get_data()
+    cloth_url = data.get('cloth_url')
+    if not cloth_url:
+        await message.answer("❌ Ошибка: вещь не найдена. Начните заново через /my_wardrobe.")
+        await state.clear()
+        return
+    # Здесь нужно отправить запрос к FASHN API или перенаправить к боту примерки.
+    # Для простоты перенаправим пользователя к отдельному боту-помощнику (как у вас было ранее)
+    await message.answer(
+        "👕 <b>Виртуальная примерка</b>\n\n"
+        "Для примерки этой вещи перейди к моему специальному боту-помощнику — @VirtuLookBot.\n"
+        "Просто отправь ему это фото и своё фото, и он покажет результат!\n\n"
+        "👉 [Нажми сюда, чтобы перейти к @VirtuLookBot](https://t.me/VirtuLookBot)",
+        parse_mode="Markdown",
+        disable_web_page_preview=True
+    )
+    await state.clear()
+
+# Обработчик для кнопки "Найти похожее" (заглушка)
 @router.callback_query(lambda c: c.data and c.data.startswith("find_"))
 async def find_similar_callback(callback: CallbackQuery):
     await callback.answer("Функция поиска похожих вещей в разработке", show_alert=True)
